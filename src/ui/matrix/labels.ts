@@ -128,6 +128,76 @@ export function pickGraphTargets(edges: MatrixEdge[], cap = 24): { targets: Grap
   return { targets: picked.map(({ key, edge, groupIndex }) => ({ key, edge, groupIndex })), totalTargets: seen.size };
 }
 
+/** Kulman etäisyys lähimpään vaakasuuntaan (0 tai π), radiaaneina välillä [0, π/2]. */
+function fromHorizontal(t: number): number {
+  const m = ((t % Math.PI) + Math.PI) % Math.PI;
+  return Math.min(m, Math.PI - m);
+}
+
+/**
+ * Verkkokuvan kehän kulmat (SVG: 0 = oikealle, π/2 = alas, kasvaa myötäpäivään). Keskellä on vaakasuora
+ * nimilappu, joten solmut pidetään poissa vaakasuunnan ympäriltä: kehän solmu (säde r) ei saa olla lähempänä
+ * vaakaakselia kuin `clearance`. Ensin kokeillaan tasavälistä kehää (alku ylhäällä tai puoli askelta siitä);
+ * jos se ei onnistu, solmut jaetaan ylä- ja alakaarelle järjestystä muuttamatta (myötäpäivään vasemmalta ylhäältä).
+ */
+export function ringAngles(n: number, r: number, clearance: number): number[] {
+  if (n <= 0) return [];
+  const alpha = Math.asin(Math.min(1, Math.max(0, clearance / r)));
+  const step = (2 * Math.PI) / n;
+  for (const t0 of [-Math.PI / 2, -Math.PI / 2 + step / 2]) {
+    const a = Array.from({ length: n }, (_, i) => t0 + i * step);
+    if (a.every((t) => fromHorizontal(t) >= alpha - 1e-9)) return a;
+  }
+  const span = Math.PI - 2 * alpha;
+  if (span < 0.2) return Array.from({ length: n }, (_, i) => -Math.PI / 2 + i * step);
+  const nTop = Math.ceil(n / 2);
+  const nBot = n - nTop;
+  const out: number[] = [];
+  for (let j = 0; j < nTop; j++) out.push(-Math.PI + alpha + ((j + 0.5) * span) / nTop);
+  for (let j = 0; j < nBot; j++) out.push(alpha + ((j + 0.5) * span) / nBot);
+  return out;
+}
+
+/**
+ * Verkkokuvan asettelu: kehän kulmat ja keskilapun sallittu puolileveys. Lappu (puolikorkeus h2) halutaan
+ * leveydelle `wantHalf`. Järjestys:
+ *  1. tasavälinen kehä, jos lappu ei peitä yhtään solmua;
+ *  2. ylä- ja alakaari (ringAngles), jos solmut eivät ahtaudu päällekkäin;
+ *  3. tasavälinen kehä ja kapeampi lappu, joka ulottuu vain lähimpään vaakasuunnan solmuun (teksti lyhennetään).
+ */
+export function ringLayout(n: number, r: number, wantHalf: number, h2: number, nodeR: number): { angles: number[]; pillHalf: number } {
+  const pad = 3;
+  const band = h2 + nodeR + pad;
+  const covered = (t: number, half: number) => Math.abs(r * Math.sin(t)) < band && Math.abs(r * Math.cos(t)) < half + nodeR + pad;
+  if (n <= 0) return { angles: [], pillHalf: wantHalf };
+  const step = (2 * Math.PI) / n;
+  const uniform = (t0: number) => Array.from({ length: n }, (_, i) => t0 + i * step);
+  const starts = [-Math.PI / 2, -Math.PI / 2 + step / 2];
+  for (const t0 of starts) {
+    const a = uniform(t0);
+    if (a.every((t) => !covered(t, wantHalf))) return { angles: a, pillHalf: wantHalf };
+  }
+  const arcs = ringAngles(n, r, band);
+  if (n < 2 || r * minAngleGap(arcs) >= 2 * nodeR + 3) return { angles: arcs, pillHalf: wantHalf };
+  let best = { angles: uniform(starts[0]), pillHalf: -Infinity };
+  for (const t0 of starts) {
+    const a = uniform(t0);
+    let half = wantHalf;
+    for (const t of a) if (Math.abs(r * Math.sin(t)) < band) half = Math.min(half, Math.abs(r * Math.cos(t)) - nodeR - pad);
+    if (half > best.pillHalf) best = { angles: a, pillHalf: half };
+  }
+  return { angles: best.angles, pillHalf: Math.max(0, best.pillHalf) };
+}
+
+/** Pienin kulmaväli vierekkäisten kehän solmujen välillä (kosketusalueen leveys). */
+export function minAngleGap(angles: number[]): number {
+  if (angles.length < 2) return 2 * Math.PI;
+  const s = angles.map((t) => ((t % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)).sort((a, b) => a - b);
+  let g = s[0] + 2 * Math.PI - s[s.length - 1];
+  for (let i = 1; i < s.length; i++) g = Math.min(g, s[i] - s[i - 1]);
+  return g;
+}
+
 /** Alueet, joissa suunta tulkitaan tämän solmun särmissä. Ilman suunnallisia särmiä: kerroksen oletusalue. */
 export function directionDomains(edges: MatrixEdge[], realm: Realm): DirectionDomain[] {
   const out: DirectionDomain[] = [];

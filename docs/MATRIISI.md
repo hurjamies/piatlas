@@ -171,16 +171,62 @@ numerot 6-2-9 on johdettu MAXin koodista, joten polun ja koodin yhtäläisyys on
 
 Tila on `src/state/matrix.ts` (puhtaat apufunktiot: tallennus ja lataus, π-faktat, ajoitussääntö) ja
 `src/state/matrix-actions.ts` (toiminnot). Näkymä on `src/ui/views/MatrixView.tsx` ja osat `src/ui/matrix/`.
+Välilehti on alapalkin viides, ja sen voi avata suoraan osoitteella `#matriisi`.
 
-- Murupolku: jokainen muru näyttää kerroksen ja yhteyden tyypin; kerrosvaihdon kohdalla erotin ”π-data | tarina”.
-  Kun fokus on tarinaverkossa, näkyy ilmoitus ”Siirryt piin todellisesta datasta symboliseen tarinaverkkoon”.
-- Verkko: fokus keskellä ja enintään 24 kohdetta kehällä (ryhmät vuorotellen), loput listassa. Viiva: matemaattinen
+Näkymän järjestys ylhäältä alas: murupolku (pysyy ylhäällä vieritettäessä), alasivut (Verkko / Lista, Tarina,
+Reitit, Loki), kerrosvaihdon ilmoitus, ohjaus, fokussolmu, juuressa lähtötunnisteiden tarkistus, 369- ja
+hyppysääntötulokset, tarinarakenteet (haarat, samannimisten kronologia, polun symbolinen numerojono),
+verkkokuva ja kaikki yhteydet listana.
+
+**Kerrosten erottelu**
+
+- Murupolku: jokainen muru näyttää kerroksen ja yhteyden tyypin (esim. ”Tarinaverkko · Symbolinen”).
+  Kerrosvaihdon kohdalla on erotin ”π-data | tarina” (tai ”tarina | π-data”). Pitkä murupolku vierii
+  sivuttain, ja reunan häivytys kertoo, että sitä on lisää. Alarivi näyttää aina kerrosten järjestyksen
+  (esim. ”π-data 3 | tarina 3”), joten kerrosvaihto pysyy näkyvissä, vaikka erotin olisi vieritetty pois.
+- Kun fokus on tarinaverkossa, näkyy ilmoitus ”Siirryt piin todellisesta datasta symboliseen tarinaverkkoon”
+  ja askel, jossa siirtymä tapahtui. Paluusta π-dataan ilmoitetaan erikseen.
+- Jokainen yhteysrivi näyttää yhteyden tyypin (Matemaattinen / Geometrinen / Ajallinen / Symbolinen) ja kohteen
+  kerroksen (π-data / Tarinaverkko). Kerrosvaihtava rivi näyttää molemmat, esim. ”π-data → Tarinaverkko”.
+- Tarinaverkon fokussolmussa lukee: ”käyttäjän antamaa symbolista tietoa. Ei matemaattinen todiste.”
+
+**Ohjaus**
+
+- Lukusuunta 234 → / ← 432 ja selitysrivi fokussolmun alueista (esim. ”432 · tarina: polkua takaperin”).
+  Rivin alla muistutus: 234 ja 432 eivät tarkoita hyppyjä 2, 3 ja 4.
+- 369-avausavain on erillinen painike. Tulos listaa kuusi menetelmää; jokaisen otsikkorivi näyttää molemmat
+  suunnat (esim. ”234: Ei uutta” ja ”432: 1 löytö”, geometrisessa kävelyssä askeleet). Menetelmän avaamalla
+  näkyvät löydöt, odotukset ja kaikki tarkistukset. Tuloksen alussa on vastuuvapauslauseke ja viitekoodit.
+- Hyppysäännöt, reitin tallennus ja ensimmäinen testireitti ovat omia painikkeitaan. Juuren korttiin on lisäksi
+  painike ”Avaa ensimmäinen testireitti: MAX (629) → 2 → HANNA → HANNA III”.
+- Osumasolmusta pääsee samaan osumaan spiraalissa, 3D:ssä, atlaksessa ja π-indeksissä. Muiden näkymien
+  alapaneelin Matriisi-painike avaa osuman reittinä juuri → koodi → osuma todellisia yhteyksiä pitkin.
+
+**Verkkokuva**
+
+- Fokus keskellä ja enintään 24 kohdetta kehällä (ryhmät vuorotellen), loput listassa. Viiva: matemaattinen
   yhtenäinen turkoosi, geometrinen violetti, ajallinen pisteviiva, symbolinen katkoviiva. Nuoli = suunnallinen,
-  vinoneliö = kerrosvaihto.
-- Tallennus: tarina, reitti (solmuavaimet + `via`), suunta, tallennetut reitit, loki (500), vierailut (2000),
-  reittitestit ja hypoteesilukitukset paikallisesti (`localStorage`). Virheellinen data korvataan oletuksella
-  kohde kerrallaan, ja ohitukset kirjataan lokiin (`tarkistus`). Muokattua tarinaa ei korvata siemenellä.
+  vinoneliö = kerrosvaihto, ↺ = jo polulla.
+- Keskilappu on vaakasuora. Kehän kulmat valitaan niin, ettei lappu peitä solmuja (`ringLayout`): tasavälinen
+  kehä, jos se onnistuu; muuten solmut ylä- ja alakaarelle; ahtaalla kehällä lapun teksti lyhennetään. Kuvan
+  korkeus seuraa nimilappujen ulottumaa, joten vähän kohteita sisältävä kuva on matala.
+
+**Tallennus**
+
+- Tarina, reitti (solmuavaimet + `via`), suunta, tallennetut reitit, loki (500), vierailut (2000),
+  reittitestit ja hypoteesilukitukset tallentuvat vain laitteelle (`localStorage`). Odottava tallennus tehdään
+  heti, kun sovellus siirtyy taustalle. Virheellinen data korvataan oletuksella kohde kerrallaan, ja ohitukset
+  kirjataan lokiin (`tarkistus`). Muokattua tarinaa ei korvata siemenellä.
 - Reitin tallennus tarkistaa jokaisen reitin osuman, koodin, numeron ja kohdan lähdeaineistosta (`mathFacts`).
 - Reittitestin hypoteesi voidaan lukita SHA-256-tiivisteellä. Ajoitus on `ennen-löydöstä` vain, jos lukitus tehtiin
   ennen kuin samaa kysymystä (koodit + järjestys + aineisto) oli ajettu. R, siemen ja satunnaisjonot eivät muuta
   kysymystä.
+
+**Päästä päähän -testi** (`scripts/e2e.cjs`, puhelinkoko 412×915 ja 360 px): lähtötunnisteet IDA @858 511 ✓,
+MATTI @858 260 ✓ ja MINI @858 960 ✓; ensimmäinen testireitti ja sen murut; kerrosvaihdon erotin, alarivi ja
+ilmoitus; HANNA III:n haarat suuntaan 234; suunnan 432 selitys ja polku B käänteisenä; reitillä olevan solmun
+avaus ei monista murua; HANNA I → II → III ja T9 42662; ankkuriosumasta HANNA @858 610 (Δn +99) ✓ ja koodin
+42662 seitsemän osumaa; 369:n kuusi menetelmää molempiin suuntiin; reitin tallennus ja reittitesti (R = 200);
+tarinan tallennus laitteelle ja uudelleenlataus; siirtymät spiraaliin ja takaisin; jokaisen yhteysrivin
+tyyppi ja kerros; ei vaakaylivuotoa, leikkautuvia nimilappuja eikä keskilapun alle jääviä solmuja; ei
+verkkopyyntöjä sovelluksen ulkopuolelle eikä konsolivirheitä.

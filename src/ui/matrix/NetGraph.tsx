@@ -1,13 +1,21 @@
 // 2D-verkkokuva: fokussolmu keskellä ja sen kohteet kehällä (enintään 24, loput listassa). Viivan tyyli kertoo
 // yhteyden tyypin, nuolenkärki suunnallisen yhteyden ja vinoneliö kerrosvaihdon (π-data ↔ tarinaverkko).
-// Nimilaput kulkevat säteen suuntaisesti, jotta ne mahtuvat luettavina 360–412 px leveälle näytölle.
+// Nimilaput kulkevat säteen suuntaisesti, jotta ne mahtuvat luettavina 360–412 px leveälle näytölle. Kehän
+// solmut pidetään keskilapun ulkopuolella (ringLayout), joten lappu ei peitä niitä.
 import { useMemo } from 'react';
 import type { Expansion, Layer, MatrixEdge, MatrixEnv } from '../../core/matrix/types';
 import { LAYER_LABELS, realmOf } from '../../core/matrix/types';
 import { useWidth } from '../components/useWidth';
-import { pickGraphTargets, shortLabel, truncate } from './labels';
+import { minAngleGap, pickGraphTargets, ringLayout, shortLabel, truncate } from './labels';
 
 export const GRAPH_CAP = 24;
+const NODE_R = 6.5;
+/** Keskilapun puolikorkeus. */
+const PILL_H2 = 13;
+/** IBM Plex Mono 11,5 px: merkin leveys 0,6 em. */
+const CENTER_CHAR_W = 6.9;
+/** IBM Plex Sans 11 px: leveähkö keskiarvo (isot kirjaimet), jotta korkeusarvio ei leikkaa nimilappuja. */
+const LABEL_CHAR_W = 6.6;
 const LAYERS: Layer[] = ['matemaattinen', 'geometrinen', 'ajallinen', 'symbolinen'];
 
 export function NetGraph({
@@ -27,16 +35,42 @@ export function NetGraph({
   const { targets, totalTargets } = useMemo(() => pickGraphTargets(exp.edges, GRAPH_CAP), [exp.edges]);
   const S = Math.min(W, 520);
   const cx = W / 2;
-  const cy = S / 2;
   const R0 = S / 2 - 4;
   const r = Math.max(52, R0 * (targets.length > 12 ? 0.41 : 0.34));
   const labelStart = r + 11;
   const maxChars = Math.max(6, Math.floor((R0 - labelStart) / 6.1));
   const n = targets.length;
-  const step = n ? (2 * Math.PI) / n : 0;
-  const half = Math.min(step / 2, Math.PI / 9);
-  const centerText = truncate(exp.node.title, 18);
-  const pillW = Math.min(2 * r - 8, centerText.length * 6.7 + 18);
+  // Keskimmäinen nimilappu on vaakasuora. Asettelu (ringLayout) pitää kehän solmut sen ulkopuolella: lappu saa
+  // koko leveytensä, jos solmut mahtuvat sen ylä- ja alapuolelle; muuten lapun teksti lyhennetään.
+  const fullW = Math.min(2 * (R0 - 8), Array.from(exp.node.title).length * CENTER_CHAR_W + 18);
+  const layout = useMemo(() => ringLayout(n, r, fullW / 2, PILL_H2, NODE_R), [n, r, fullW]);
+  const angles = layout.angles;
+  const half = Math.min(minAngleGap(angles) / 2, Math.PI / 9);
+  const centerText =
+    fullW / 2 <= layout.pillHalf + 0.5
+      ? exp.node.title
+      : truncate(exp.node.title, Math.max(4, Math.floor((2 * layout.pillHalf - 18) / CENTER_CHAR_W + 1e-6)));
+  const pillW = Math.min(2 * layout.pillHalf, Array.from(centerText).length * CENTER_CHAR_W + 18);
+  const labels = targets.map((t) => truncate(`${onTrail.has(t.key) ? '↺ ' : ''}${shortLabel(t.edge.to, env.story, env.events)}`, maxChars));
+  // Kuvan korkeus nimilappujen pystysuuntaisen ulottuman mukaan (ylä- ja alapuoli erikseen): vähän kohteita →
+  // matalampi kuva puhelimessa. Kehä piirretään aina kokonaan.
+  let up = r + NODE_R + 6;
+  let down = up;
+  labels.forEach((l, i) => {
+    const s = Math.sin(angles[i]);
+    const reach = Math.abs(s) * (labelStart + Array.from(l).length * LABEL_CHAR_W) + 8;
+    if (s < 0) up = Math.max(up, reach);
+    else down = Math.max(down, reach);
+  });
+  up = Math.min(up, S / 2);
+  down = Math.min(down, S / 2);
+  const H = Math.ceil(up + down);
+  const cy = up;
+  /** Kerrosvaihdon vinoneliö säteelle niin, ettei keskilappu peitä sitä. */
+  const crossAt = (c: number, s: number) => {
+    const need = Math.min(Math.abs(s) > 1e-6 ? (PILL_H2 + 6) / Math.abs(s) : Infinity, Math.abs(c) > 1e-6 ? (pillW / 2 + 6) / Math.abs(c) : Infinity);
+    return Math.min(Math.max(r * 0.6, need), r - 13);
+  };
 
   return (
     <section className="card mx-net-card" aria-label="Verkko: fokussolmu ja sen yhteydet">
@@ -49,9 +83,9 @@ export function NetGraph({
           <svg
             className="mx-net"
             data-testid="matrix-net"
-            viewBox={`0 0 ${W} ${S}`}
+            viewBox={`0 0 ${W} ${H}`}
             width={W}
-            height={S}
+            height={H}
             role="img"
             aria-label={`Verkko: ${exp.node.title} ja ${n} kohdetta`}
           >
@@ -64,12 +98,12 @@ export function NetGraph({
             </defs>
             <circle cx={cx} cy={cy} r={r} className="mx-ring" />
             {targets.map((t, i) => {
-              const th = -Math.PI / 2 + i * step;
+              const th = angles[i];
               const c = Math.cos(th);
               const s = Math.sin(th);
               const e = t.edge;
               const toRealm = realmOf(e.to);
-              const mid = r * 0.6;
+              const mid = crossAt(c, s);
               return (
                 <g key={t.key}>
                   <line
@@ -94,7 +128,7 @@ export function NetGraph({
               );
             })}
             {targets.map((t, i) => {
-              const th = -Math.PI / 2 + i * step;
+              const th = angles[i];
               const c = Math.cos(th);
               const s = Math.sin(th);
               const e = t.edge;
@@ -107,7 +141,7 @@ export function NetGraph({
               const deg = (th * 180) / Math.PI + (left ? 180 : 0);
               const trail = onTrail.has(t.key);
               const seen = visited.has(t.key);
-              const label = truncate(`${trail ? '↺ ' : ''}${shortLabel(e.to, env.story, env.events)}`, maxChars);
+              const label = labels[i];
               const a0 = th - half;
               const a1 = th + half;
               const rin = r - 14;
@@ -129,7 +163,7 @@ export function NetGraph({
                   }}
                 >
                   <path d={wedge} className="mx-hit" />
-                  <circle cx={nx} cy={ny} r={6.5} className={`mx-node r-${toRealm}`} />
+                  <circle cx={nx} cy={ny} r={NODE_R} className={`mx-node r-${toRealm}`} />
                   {seen && !trail && <circle cx={nx} cy={ny} r={2} className="mx-node-dot" />}
                   <text
                     x={lx}
@@ -144,7 +178,7 @@ export function NetGraph({
                 </g>
               );
             })}
-            <rect x={cx - pillW / 2} y={cy - 13} width={pillW} height={26} rx={13} className={`mx-center r-${exp.node.realm}`} />
+            <rect x={cx - pillW / 2} y={cy - PILL_H2} width={pillW} height={2 * PILL_H2} rx={PILL_H2} className={`mx-center r-${exp.node.realm}`} />
             <text x={cx} y={cy} className="mx-center-label" textAnchor="middle" dominantBaseline="central">
               {centerText}
             </text>

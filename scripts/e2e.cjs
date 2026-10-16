@@ -1,6 +1,9 @@
 // Päästä päähän -savutesti ja kuvakaappaukset puhelinkoossa (Chromium/Playwright).
 // Käyttö: npm run build && npx vite preview --port 4173 &  sitten  npm run e2e
 // Playwright ei ole projektin riippuvuus: asenna se tarvittaessa (npm i -D playwright) tai aja NODE_PATH=$(npm root -g).
+// Ensimmäiset 22 tarkistusta: MVP-1–3. Sen jälkeen tarinamatriisi (Matriisi-välilehti) 412 px:ssä ja asettelu
+// 360 px:ssä. PI_ATLAS_SHOTS = kuvien kansio (oletus docs/screenshots), PI_ATLAS_SHOTS_360 = 360 px:n kuvat
+// (valinnainen), PI_ATLAS_NO_WORKER=1 = ilman Web Workeria.
 const path = require('path');
 const fs = require('fs');
 let chromium;
@@ -272,6 +275,17 @@ const check = (name, ok, extra = '') => {
           const b = t.getBoundingClientRect();
           if (b.left < s.left - 1 || b.right > s.right + 1 || b.top < s.top - 1 || b.bottom > s.bottom + 1)
             out.push(`verkkokuvan nimilappu "${t.textContent}" leikkautuu`);
+        }
+        // Keskilappu ei saa peittää kehän solmuja, ja sen teksti mahtuu lappuun.
+        const pill = svg.querySelector('.mx-center')?.getBoundingClientRect();
+        const ctext = svg.querySelector('.mx-center-label')?.getBoundingClientRect();
+        if (pill) {
+          if (ctext && (ctext.left < pill.left - 0.5 || ctext.right > pill.right + 0.5)) out.push('keskilapun teksti ylittää lapun');
+          for (const c of svg.querySelectorAll('.mx-node')) {
+            const b = c.getBoundingClientRect();
+            if (b.right > pill.left && b.left < pill.right && b.bottom > pill.top && b.top < pill.bottom)
+              out.push(`keskilappu peittää solmun ${c.closest('[data-key]')?.getAttribute('data-key')}`);
+          }
         }
       }
       return out;

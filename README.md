@@ -34,6 +34,67 @@ Ensimmäisen version käyttötapaus toimii näin:
    ankkuriin sekä alkuperäiset numerot tarkistusmerkin kanssa.
 4. Vaihda näkymää: **Kartta** (spiraali, 8 kolmiota, avattu verkko) ja **Numerot** (alkuperäinen numerojono).
 5. Aja **Testit**-välilehdellä ensimmäinen kontrolloitu läheisyystesti.
+6. Avaa **Matriisi** ja napauta ”Avaa ensimmäinen testireitti” (ks. seuraava luku).
+
+## Recursive Story Matrix (Matriisi-välilehti)
+
+Matriisi on rekursiivinen numerokartta ja haarautuva tarinamoottori. Jokainen solmu (koodi, numero, osuma,
+nimi, henkilö, polku, tulkinta, tapahtuma) avautuu uusiksi solmuiksi, ja reitti lähtöankkurista näkyy
+murupolkuna. Määrittely: [docs/MATRIISI.md](docs/MATRIISI.md).
+
+![Matriisi: ensimmäinen testireitti ja kerrosvaihto](docs/screenshots/13-matriisi-testireitti.jpg)
+
+**Kaksi kerrosta pidetään erillään.**
+
+| Kerros | Sisältö | Tunnistat sen |
+| --- | --- | --- |
+| **π-data** | piin desimaalit, koodit, osumat, Δn, kartoitukset, reittitestin p | turkoosi, yhtenäinen reunus, ✓ = tarkistettu lähdeaineistosta |
+| **Tarinaverkko** | käyttäjän henkilöt, suhteet, tulkinnat, polut ja tapahtumat | ruusu, katkoviiva |
+
+Jokainen yhteys on yhtä neljästä tyypistä: Matemaattinen, Geometrinen, Ajallinen tai Symbolinen. Jokainen
+murupolun muru ja jokainen yhteysrivi näyttää sekä tyypin että kerroksen. Kun reitti siirtyy π-datasta
+tarinaverkkoon, murupolussa on erotin **π-data | tarina**, murupolun alarivi näyttää kerrosten järjestyksen
+(esim. ”π-data 3 | tarina 3”) ja näkymä ilmoittaa: *”Siirryt piin todellisesta datasta symboliseen
+tarinaverkkoon.”* Symbolinen yhteys ei ole matemaattinen todiste.
+
+**Käyttö puhelimella**
+
+1. Avaa alapalkista **Matriisi** (tai osoite `…/#matriisi`). Juuri on lähtöankkuri IDA 432 @858 511.
+   Lähtötunnisteet tarkistetaan lähdeaineistosta: IDA @858 511 ✓, MATTI @858 260 ✓, MINI @858 960 ✓.
+2. Napauta yhteysriviä tai verkkokuvan solmua: se avautuu ja lisätään murupolkuun. Murua napauttamalla palaat
+   siihen, ja ankkuripainike vie juureen. Reitillä jo olevan solmun avaus palaa siihen (”↺ jo polulla”), joten
+   silmukoita ei synny.
+3. **234 →** ja **← 432** vaihtavat lukusuuntaa. Selitysrivi kertoo, mitä suunta tarkoittaa tämän solmun
+   alueissa (π-indeksi, koodi, spiraali, oktaedri, tarina, aika). Suunta ei ole hyppy.
+4. **369** on erillinen avausavain. Se ajaa kuusi menetelmää molempiin suuntiin ja näyttää myös tulokset
+   ”Ei uutta” sekä odotukset. **Hyppysäännöt** (+2, +3, +4 ja −4, −3, −2) ajetaan vain painamalla.
+5. **Verkko** näyttää enintään 24 kohdetta kehällä, **Lista** pelkät yhteydet ryhmittäin. i-painike kertoo,
+   miten yhteys laskettiin.
+6. Osumasolmun **Spiraali**, **3D**, **Atlas/verkko** ja **π-indeksi** avaavat saman osuman muissa
+   näkymissä. Alapaneelin **Matriisi**-painike tuo osuman takaisin (juuri → koodi → osuma).
+7. **Tallenna reitti** tallentaa reitin, oman tulkinnan ja hypoteesin ajoituksen; reitin π-faktat tarkistetaan
+   tallennettaessa. **Reitit**-sivulla reittitesti vertaa reitin lyhintä ikkunaa nollamalliin (R, siemen,
+   valinnainen SHA-256-lukitus ennen ajoa). **Tarina**-sivulla muokataan henkilöitä, suhteita, tulkintoja ja
+   polkuja (JSON-vienti ja -tuonti). **Loki** näyttää avaukset ja operaatiot.
+
+**Ensimmäinen testireitti.** ”Avaa ensimmäinen testireitti” kulkee todellisia yhteyksiä pitkin:
+MAX (629) → numero 2 → tulkinta ”2 = HANNA” (koodissa 629) → nimi HANNA → HANNA III. Kerros vaihtuu
+tulkinnan kohdalla. HANNA III:ssa näkyvät haarat: suuntaan 234 polku A (sukupolvien jatkuvuus) jatkuu → MAX
+ja polku B (ihmissuhteiden kehityspolku) → SALLA → IDA. Suuntaan 432 polku B luetaan IDA → SALLA → HANNA.
+HANNA-nimestä avautuu kolmen eri henkilön kronologia HANNA I → II → III. T9-koodi 42662 on nimen ominaisuus,
+ei henkilön.
+
+**Mikä on matematiikkaa ja mikä symbolista.** Koodit, osumat, Δn, kartoitukset ja p-arvot ovat π-dataa:
+laskettuja ja toistettavia. Esimerkiksi IDA @858 511:stä suuntaan 234 lähin HANNA-osuma on @858 610
+(Δn +99, tarkistettu), ja koodilla 42662 on aineistossa 7 osumaa (odotus 10). Polkujen järjestys,
+symbolinumerot (HANNA = 2, SALLA = 3, IDA = 4), tulkinnat ja suhteet ovat käyttäjän antamia. Polun B
+numerojono 432 on sama merkkijono kuin IDAn T9-koodi, mutta se on käyttäjän numeroiden ja koodin
+yhtäläisyys, ei π-havainto.
+
+**Tarinatiedot pysyvät laitteella.** Henkilöt, kuvaukset, tulkinnat, polut, tallennetut reitit ja loki
+tallennetaan vain selaimen `localStorage`en. Sovellus ei lähetä niitä minnekään. E2e-testi tarkistaa, ettei
+matriisin käyttö tee pyyntöjä sovelluksen ulkopuolelle (fontteja lukuun ottamatta), ja että tarina säilyy
+uudelleenlatauksessa.
 
 ## Asennus ja komennot
 
@@ -42,7 +103,7 @@ Vaatii Node.js 20+.
 ```bash
 npm install
 npm run dev            # kehityspalvelin (myös lähiverkkoon: --host)
-npm test               # Vitest: 215 yksikkötestiä, myös täydellä 1M-aineistolla
+npm test               # Vitest: 219 yksikkötestiä, myös täydellä 1M-aineistolla
 npm run build          # tavallinen tuotantoversio → dist/
 npm run build:pages    # GitHub Pages -versio → dist/ (offline-PWA)
 npm run build:artifact # yksi HTML-tiedosto + data/ → dist-artifact/
@@ -54,9 +115,12 @@ Päästä päähän -testi ja kuvakaappaukset (Playwright, ei projektin riippuvu
 ```bash
 npm run build && npx vite preview --port 4173 &
 npm i -D playwright && npx playwright install chromium   # kerran
-npm run e2e            # 22 tarkistusta puhelinkoossa, kuvat → docs/screenshots/
+npm run e2e            # 52 tarkistusta puhelinkoossa (412 px, matriisi myös 360 px), kuvat → docs/screenshots/
 PI_ATLAS_NO_WORKER=1 npm run e2e   # sama ilman Web Workeria (varapolku)
 ```
+
+Ilman globaalia asennusta: `NODE_PATH=$(npm root -g) node scripts/e2e.cjs`. Ympäristömuuttuja
+`PI_ATLAS_SHOTS` vaihtaa kuvien kansion, ja `PI_ATLAS_SHOTS_360` tallentaa lisäksi 360 px:n matriisikuvat.
 
 ## Mitä on toteutettu
 
@@ -99,11 +163,11 @@ PI_ATLAS_NO_WORKER=1 npm run e2e   # sama ilman Web Workeria (varapolku)
   π-indeksi ja kalenteri näkyvät kahtena synkronoituna aikajanana.
 - Muistiinpanot osumille, JSON-raportti ja CSV-vienti (kopiointi tai lataus) sekä muutoshistoria.
 
-**Tarinamatriisi (MVP, Matriisi-välilehti)** — määrittely [docs/MATRIISI.md](docs/MATRIISI.md)
+**Tarinamatriisi (MVP, Matriisi-välilehti)** — käyttö yllä, määrittely [docs/MATRIISI.md](docs/MATRIISI.md)
 
 - Rekursiivinen avaus lähtöankkurista: murupolku, jonka jokainen muru näyttää kerroksen (π-data / Tarinaverkko)
-  ja yhteyden tyypin. Kerrosvaihto näkyy erottimena ja ilmoituksena ”Siirryt piin todellisesta datasta
-  symboliseen tarinaverkkoon”.
+  ja yhteyden tyypin. Kerrosvaihto näkyy erottimena, murupolun alarivillä ja ilmoituksena ”Siirryt piin
+  todellisesta datasta symboliseen tarinaverkkoon”.
 - Lukusuunta 234 / 432 alueittain selitettynä, erillinen 369-avausavain ja erilliset nimetyt hyppysäännöt.
 - 2D-verkkokuva (enintään 24 kohdetta) ja kaikki yhteydet ryhmittäin sivutettuna listana.
 - Ensimmäinen testireitti MAX (629) → 2 → HANNA → HANNA III, polkujen haarat ja samannimisten kronologia.
@@ -111,6 +175,7 @@ PI_ATLAS_NO_WORKER=1 npm run e2e   # sama ilman Web Workeria (varapolku)
   laitteelle.
 - Reitin tallennus π-faktoineen (tarkistetaan lähdeaineistosta) ja reittitesti satunnaisvertailulla,
   SHA-256-hypoteesilukitus, BH-q ja monivertailuvaroitus.
+- E2e-testi käy koko polun läpi puhelinkoossa (412 px) ja tarkistaa asettelun myös 360 px:n leveydellä.
 
 **Vielä suunnitelmaa**
 
@@ -138,17 +203,36 @@ R = 10 000, siemen 20251016, aineisto `pi_digits_1m.txt`. Komento: `npx vite-nod
 Yhteenveto: valintakorjattu testi ei näytä poikkeamaa. Koodi `432` esiintyy 1054 kertaa (odotus 1000), joten
 se ei yksilöi Idaa.
 
+## Ensimmäinen reittitesti (Matriisi)
+
+Reitti MAX 629 → HANNA 42662 → SALLA 72552 → IDA 432. Testisuure on lyhin ikkuna, johon jokaiselta koodilta
+valitaan yksi osuma (kaikki osumat mukana, ei ankkuria). R = 10 000, siemen 20261016, aineisto
+`pi_digits_1m.txt`, `PIATLAS-ROUTE-1.0.0`.
+
+| Järjestys | Lyhin ikkuna | Nollamallin mediaani | p | Tulkinta |
+| --- | --- | --- | --- | --- |
+| mikä tahansa | 1 898 des. (n 856 712 … 858 610) | 8 566 des. | 0,127 | Ei poikkeamaa |
+| 234 (kasvava n) | 84 706 des. | 18 778 des. | 0,97 | Ei poikkeamaa |
+| 432 (pienenevä n) | 3 708 des. | 18 092 des. | 0,076 | Ei poikkeamaa |
+
+Kolme järjestystä on kolme testiä: riippumattomilla testeillä vähintään yksi p ≤ 0,05 syntyisi sattumalta
+noin 14 %:n todennäköisyydellä (1 − 0,95³). Reitti tuli tehtävänannosta aiempien löytöjen jälkeen, joten sen
+hypoteesin ajoitus on ”ei tiedossa”. Laskettu ydinkirjaston funktiolla `runRouteTest`
+(`src/core/matrix/route-test.ts`) samoilla parametreilla kuin Reitit-sivulla.
+
 ## Hakemistorakenne
 
 ```
 src/core/        puhdas laskenta: digits, encodings, search, mapping, net, fibonacci, stats, random, neighbors
+src/core/matrix/ tarinamatriisi: avaus (expand), reitti, tarinamalli, 369, hyppysäännöt, reittitesti
 src/engine/      Web Worker ja pääsäikeen varapolku (sama käsittelijä)
-src/state/       sovelluksen tila, tallennus (localStorage + IndexedDB), raportti
-src/ui/          React-näkymät: Avaruus (Three.js), Kartta (canvas), Numerot, Testit, paneelit
+src/state/       sovelluksen tila, tallennus (localStorage + IndexedDB), raportti, matriisin tila ja toiminnot
+src/ui/          React-näkymät: Avaruus (Three.js), Kartta (canvas), Numerot, Testit, Matriisi, paneelit
+src/ui/matrix/   Matriisi-välilehden osat: murupolku, ohjaus, verkkokuva, yhteyslista, Tarina, Reitit, Loki
 tests/           Vitest-testit (täysi 1M-aineisto + fixture)
 scripts/         e2e.cjs, artifact-wrap.mjs, make-icons.cjs, stats-summary.ts
 public/data/     pi_digits_1m.txt (tutkimusaineisto)
-docs/            TEKNINEN.md ja kuvakaappaukset
+docs/            TEKNINEN.md, MATRIISI.md ja kuvakaappaukset
 .github/         GitHub Actions: testit ja Pages-julkaisu
 ```
 

@@ -29,7 +29,18 @@ import {
   summarizeRouteRun,
   trailToHit,
 } from '../src/state/matrix';
-import { directionDomains, directionExplanation, fmtMetricValue, groupEdges, pickGraphTargets, stepsText } from '../src/ui/matrix/labels';
+import {
+  directionDomains,
+  directionExplanation,
+  fmtMetricValue,
+  groupEdges,
+  minAngleGap,
+  pickGraphTargets,
+  realmRuns,
+  ringAngles,
+  ringLayout,
+  stepsText,
+} from '../src/ui/matrix/labels';
 import { FIXTURE_DIGITS, FULL, HAS_FULL } from './helpers';
 
 const ANCHOR = { code: '432', n: 858511, label: 'IDA' };
@@ -438,5 +449,67 @@ describe('käyttöliittymän apufunktiot', () => {
     expect(fmtMetricValue('chord', 0.0391331)).toBe('0,0391331');
     expect(stepsText(1)).toBe('1 askel');
     expect(stepsText(5)).toBe('5 askelta');
+  });
+
+  it('verkkokuvan kehä: solmut eivät osu keskilapun vaakakaistaan, järjestys säilyy myötäpäivään', () => {
+    const clearance = 22.5;
+    for (const r of [52, 63, 90]) {
+      for (let n = 1; n <= 24; n++) {
+        const a = ringAngles(n, r, clearance);
+        expect(a.length).toBe(n);
+        // Jokainen solmu on vähintään `clearance` vaakaakselin ylä- tai alapuolella.
+        for (const t of a) expect(Math.abs(r * Math.sin(t))).toBeGreaterThanOrEqual(clearance - 1e-6);
+        // Kulmat kasvavat (myötäpäivään) ja mahtuvat yhdelle kierrokselle.
+        for (let i = 1; i < n; i++) expect(a[i]).toBeGreaterThan(a[i - 1]);
+        expect(a[n - 1] - a[0]).toBeLessThan(2 * Math.PI);
+        if (n >= 2) expect(minAngleGap(a)).toBeGreaterThan(0.15);
+      }
+    }
+    // Yksi kohde ylhäällä; neljä kohdetta vinottain (ei vasemmalla eikä oikealla keskilapun kohdalla).
+    expect(ringAngles(1, 52, clearance)).toEqual([-Math.PI / 2]);
+    expect(ringAngles(4, 52, clearance).map((t) => Math.round((t * 180) / Math.PI))).toEqual([-45, 45, 135, 225]);
+  });
+
+  it('verkkokuvan asettelu: keskilappu ei peitä solmuja, eivätkä solmut ahtaudu päällekkäin kaarilla', () => {
+    const h2 = 13;
+    const nodeR = 6.5;
+    for (const r of [52, 63, 90]) {
+      for (const wantHalf of [30, 60, 110, 145]) {
+        for (let n = 1; n <= 24; n++) {
+          const { angles, pillHalf } = ringLayout(n, r, wantHalf, h2, nodeR);
+          expect(angles.length).toBe(n);
+          expect(pillHalf).toBeLessThanOrEqual(wantHalf);
+          for (const t of angles) {
+            const x = Math.abs(r * Math.cos(t));
+            const y = Math.abs(r * Math.sin(t));
+            // Solmun ympyrä ei leikkaa lapun suorakulmiota.
+            expect(y >= h2 + nodeR || x >= pillHalf + nodeR).toBe(true);
+          }
+          const step = (2 * Math.PI) / n;
+          const uniform = n < 2 || Math.abs(minAngleGap(angles) - step) < 1e-9;
+          // Kaariasettelua käytetään vain, jos vierekkäiset solmut eivät mene päällekkäin.
+          if (!uniform) expect(r * minAngleGap(angles)).toBeGreaterThanOrEqual(2 * nodeR + 3);
+        }
+      }
+    }
+    // Lyhyt otsikko ja 24 kohdetta: tasavälinen kehä säilyy, lappu täysleveänä.
+    expect(ringLayout(24, 63, 33, h2, nodeR).pillHalf).toBe(33);
+    // Pitkä otsikko ja 24 kohdetta ahtaalla kehällä: lappu kapenee solmujen väliin.
+    expect(ringLayout(24, 63, 110, h2, nodeR).pillHalf).toBeLessThan(63 - nodeR);
+    // Pitkä otsikko ja vähän kohteita: solmut kaarille, lappu täysleveänä.
+    expect(ringLayout(13, 63, 110, h2, nodeR).pillHalf).toBe(110);
+  });
+
+  it('murupolun kerrokset ryhminä: kerrosvaihto on ryhmien raja', () => {
+    expect(realmRuns(['pi', 'pi', 'pi', 'tarina', 'tarina', 'tarina'])).toEqual([
+      { realm: 'pi', count: 3 },
+      { realm: 'tarina', count: 3 },
+    ]);
+    expect(realmRuns(['pi', 'tarina', 'pi'])).toEqual([
+      { realm: 'pi', count: 1 },
+      { realm: 'tarina', count: 1 },
+      { realm: 'pi', count: 1 },
+    ]);
+    expect(realmRuns([])).toEqual([]);
   });
 });

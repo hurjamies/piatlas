@@ -72,7 +72,7 @@ export function eventTimestamp(e: LifeEvent): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-export type AuditType = 'ankkuri' | 'aineisto' | 'termi' | 'esirekisteröinti' | 'testi' | 'tapahtuma';
+export type AuditType = 'ankkuri' | 'aineisto' | 'termi' | 'esirekisteröinti' | 'testi' | 'tapahtuma' | 'matriisi';
 
 export interface AuditEntry {
   ts: string;

@@ -57,6 +57,7 @@ export async function initApp(): Promise<void> {
   if (hash === 'kartta') store.set({ tab: 'map' });
   if (hash === 'numerot') store.set({ tab: 'digits' });
   if (hash === 'testit') store.set({ tab: 'tests' });
+  if (hash === 'matriisi') store.set({ tab: 'matrix' });
   const imported = await loadImportedDataset();
   if (imported && (await applyDataset(imported.digits, imported.name, 'imported'))) return;
   await loadBundled();

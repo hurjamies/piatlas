@@ -14,6 +14,7 @@ import {
   STATISTIC_HELP,
   STATISTIC_LABELS,
 } from '../../core/stats';
+import { JUMP_VERSION, MATRIX_VERSION, OPS369_VERSION, ROUTE_TEST_VERSION } from '../../core/matrix/types';
 import { PreRegistration, sameQuestion, TestRun, TestSpec } from '../../core/types';
 import { FORMULA_TEXT, FORMULA_VERSION, ENCODING_VERSION, LEGACY_FORMULA_TEXT, NET_VERSION, STATS_VERSION } from '../../core/version';
 import {
@@ -26,6 +27,7 @@ import {
   runRandomControlTest,
   toast,
 } from '../../state/actions';
+import { setMatrixSub } from '../../state/matrix-actions';
 import { buildReport, hitsCsv } from '../../state/report';
 import { store, useApp } from '../../state/store';
 import { fiNum, fmtDateTime, fmtExpected, fmtMetric, fmtN, fmtPct, fmtPfi } from '../format';
@@ -419,6 +421,7 @@ function TestLog() {
       <div className="section">
         <div className="eyebrow">Testiloki</div>
         <div className="muted">Ei vielä ajettuja testejä. Jokainen ajo kirjataan monivertailua varten.</div>
+        <MatrixRunsLine />
       </div>
     );
   return (
@@ -430,6 +433,7 @@ function TestLog() {
         {distinct((r) => r.spec.statistic)} testisuuretta. Jos testejä on m kappaletta, noin m·α niistä antaa p ≤ α pelkällä
         sattumalla (nyt {(runs.length * 0.05).toFixed(1).replace('.', ',')} kun α = 0,05). Raportoi kaikki, ei vain parhaita.
       </div>
+      <MatrixRunsLine />
       <div className="table-wrap">
         <table className="data">
           <thead>
@@ -490,6 +494,28 @@ function TestLog() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Matriisin reittitestit ovat oma testiperheensä; ne näytetään erillisellä rivillä (eivät muuta yllä olevaa määrää). */
+function MatrixRunsLine() {
+  const m = useApp((s) => s.matrix.routeRuns.length);
+  if (!m) return null;
+  return (
+    <div className="row" style={{ gap: 8 }} data-testid="tests-matrix-runs">
+      <span className="muted" style={{ fontSize: 13 }}>
+        Matriisin reittitestejä: {m} (ks. Matriisi → Reitit)
+      </span>
+      <button
+        className="btn small ghost"
+        onClick={() => {
+          setMatrixSub('reitit');
+          store.set({ tab: 'matrix' });
+        }}
+      >
+        Avaa reitit
+      </button>
     </div>
   );
 }
@@ -704,6 +730,10 @@ function FormulaSection() {
         <dd>{STATS_VERSION}</dd>
         <dt>Avattu verkko</dt>
         <dd>{NET_VERSION}</dd>
+        <dt>Tarinamatriisi</dt>
+        <dd>
+          {MATRIX_VERSION} · {OPS369_VERSION} · {JUMP_VERSION} · {ROUTE_TEST_VERSION}
+        </dd>
         <dt>Laskenta</dt>
         <dd>{engineMode === 'worker' ? 'Web Worker' : engineMode === 'inline' ? 'pääsäie' : 'käynnistyy'}</dd>
       </dl>

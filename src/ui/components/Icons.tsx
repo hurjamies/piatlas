@@ -25,6 +25,18 @@ export const IconTests = () => (
     <path d="M10 4.5v15.5" stroke="currentColor" strokeDasharray="1.5 2" opacity=".8" />
   </svg>
 );
+/** Solmuverkko: Recursive Story Matrix. */
+export const IconMatrix = () => (
+  <svg viewBox="0 0 24 24" {...base} aria-hidden="true">
+    <circle cx="12" cy="12" r="2.7" />
+    <circle cx="4.8" cy="5.3" r="1.9" />
+    <circle cx="19.2" cy="5.6" r="1.9" />
+    <circle cx="5.2" cy="18.7" r="1.9" />
+    <circle cx="18.8" cy="18.4" r="1.9" />
+    <path d="M10 10.1 6.2 6.6M14 10.2l3.7-3.3M10 13.9l-3.4 3.4M14 13.8l3.4 3.3" />
+    <path d="M6.7 5.4h10.6M19.1 7.5v9" opacity=".5" strokeDasharray="1.5 2" />
+  </svg>
+);
 export const IconPanel = () => (
   <svg viewBox="0 0 24 24" {...base} aria-hidden="true">
     <circle cx="10.5" cy="10.5" r="5.5" />

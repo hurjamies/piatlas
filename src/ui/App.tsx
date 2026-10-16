@@ -3,12 +3,13 @@ import { importDatasetFile, initApp, openPanel, resetAnchor, setTab } from '../s
 import { store, Tab, useApp } from '../state/store';
 import { fmtN } from './format';
 import { HitSheet } from './components/HitSheet';
-import { IconAnchor, IconClose, IconDigits, IconOcta, IconPanel, IconSpiral, IconTests } from './components/Icons';
+import { IconAnchor, IconClose, IconDigits, IconMatrix, IconOcta, IconPanel, IconSpiral, IconTests } from './components/Icons';
 import { EventsPanel } from './panels/EventsPanel';
 import { NeighborsPanel } from './panels/NeighborsPanel';
 import { TermsPanel } from './panels/TermsPanel';
 import { DigitsView } from './views/DigitsView';
 import { MapView } from './views/MapView';
+import { MatrixView } from './views/MatrixView';
 import { SpaceView } from './views/SpaceView';
 import { TestsView } from './views/TestsView';
 
@@ -17,6 +18,7 @@ const TABS: { id: Tab; label: string; icon: ComponentType }[] = [
   { id: 'map', label: 'Kartta', icon: IconSpiral },
   { id: 'digits', label: 'Numerot', icon: IconDigits },
   { id: 'tests', label: 'Testit', icon: IconTests },
+  { id: 'matrix', label: 'Matriisi', icon: IconMatrix },
 ];
 
 export function App() {
@@ -40,6 +42,7 @@ export function App() {
             {tab === 'map' && <MapView />}
             {tab === 'digits' && <DigitsView />}
             {tab === 'tests' && <TestsView />}
+            {tab === 'matrix' && <MatrixView />}
           </>
         )}
         {hasDigits && (tab === 'space' || tab === 'map') && <HitSheet />}

@@ -42,7 +42,7 @@ Vaatii Node.js 20+.
 ```bash
 npm install
 npm run dev            # kehityspalvelin (myös lähiverkkoon: --host)
-npm test               # Vitest: 59 yksikkötestiä, myös täydellä 1M-aineistolla
+npm test               # Vitest: 215 yksikkötestiä, myös täydellä 1M-aineistolla
 npm run build          # tavallinen tuotantoversio → dist/
 npm run build:pages    # GitHub Pages -versio → dist/ (offline-PWA)
 npm run build:artifact # yksi HTML-tiedosto + data/ → dist-artifact/
@@ -98,6 +98,19 @@ PI_ATLAS_NO_WORKER=1 npm run e2e   # sama ilman Web Workeria (varapolku)
 - Elämäntapahtumat (P5 = x, y, z, n, aikaleima). Tapahtuma linkitetään osumaan vain käsin.
   π-indeksi ja kalenteri näkyvät kahtena synkronoituna aikajanana.
 - Muistiinpanot osumille, JSON-raportti ja CSV-vienti (kopiointi tai lataus) sekä muutoshistoria.
+
+**Tarinamatriisi (MVP, Matriisi-välilehti)** — määrittely [docs/MATRIISI.md](docs/MATRIISI.md)
+
+- Rekursiivinen avaus lähtöankkurista: murupolku, jonka jokainen muru näyttää kerroksen (π-data / Tarinaverkko)
+  ja yhteyden tyypin. Kerrosvaihto näkyy erottimena ja ilmoituksena ”Siirryt piin todellisesta datasta
+  symboliseen tarinaverkkoon”.
+- Lukusuunta 234 / 432 alueittain selitettynä, erillinen 369-avausavain ja erilliset nimetyt hyppysäännöt.
+- 2D-verkkokuva (enintään 24 kohdetta) ja kaikki yhteydet ryhmittäin sivutettuna listana.
+- Ensimmäinen testireitti MAX (629) → 2 → HANNA → HANNA III, polkujen haarat ja samannimisten kronologia.
+- Tarinaeditori (henkilöt, suhteet, tulkinnat, polut, JSON-vienti ja -tuonti). Tarinatiedot tallentuvat vain
+  laitteelle.
+- Reitin tallennus π-faktoineen (tarkistetaan lähdeaineistosta) ja reittitesti satunnaisvertailulla,
+  SHA-256-hypoteesilukitus, BH-q ja monivertailuvaroitus.
 
 **Vielä suunnitelmaa**
 

@@ -1,7 +1,9 @@
-// Paikallinen tallennus. localStorage: hakutermit, ankkuri, muistiinpanot, tapahtumat, testiloki.
+// Paikallinen tallennus. localStorage: hakutermit, ankkuri, muistiinpanot, tapahtumat, testiloki ja
+// tarinamatriisi (tarinamalli, reitti, tallennetut reitit, loki, reittitestit). Tarinatiedot pysyvät laitteella.
 // IndexedDB: käyttäjän tuoma (mahdollisesti suuri) numerotiedosto.
 // Kaikki kutsut on suojattu: jos selain estää tallennuksen, sovellus toimii silti.
 
+import { deserializeMatrix, MatrixState, PersistedMatrix, serializeMatrix } from './matrix';
 import { AppState, DEFAULT_PREFS, DEFAULT_TERMS, store } from './store';
 
 const KEY = 'pi-atlas:v1';
@@ -9,17 +11,33 @@ const KEY = 'pi-atlas:v1';
 type Persisted = Pick<
   AppState,
   'terms' | 'anchor' | 'notes' | 'events' | 'audit' | 'prereg' | 'runs' | 'prefs' | 'tab' | 'mapMode' | 'spaceMode'
->;
+> & { matrix: PersistedMatrix };
 
-export function loadPersisted(): Partial<Persisted> | null {
+export type LoadedState = Partial<Omit<Persisted, 'matrix'>> & { matrix?: MatrixState };
+
+const TABS: AppState['tab'][] = ['space', 'map', 'digits', 'tests', 'matrix'];
+
+export function loadPersisted(): LoadedState | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as Partial<Persisted>;
+    if (!data || typeof data !== 'object') return null;
     if (!Array.isArray(data.terms) || !data.terms.length) data.terms = DEFAULT_TERMS;
     // Uudet oletustermit lisätään, jos käyttäjä ei ole niitä poistanut (poistetut kirjataan auditiin).
     data.prefs = { ...DEFAULT_PREFS, ...(data.prefs ?? {}) };
-    return data;
+    if (data.tab !== undefined && !TABS.includes(data.tab)) delete data.tab;
+    const { matrix: rawMatrix, ...rest } = data;
+    const out: LoadedState = rest;
+    // Matriisi tarkistetaan erikseen: virheellinen osa korvataan oletuksella, käyttäjän tarinaa ei korvata siemenellä.
+    if (rawMatrix !== undefined) {
+      const { state, warnings } = deserializeMatrix(rawMatrix);
+      const ts = new Date().toISOString();
+      out.matrix = warnings.length
+        ? { ...state, log: [...state.log, ...warnings.map((text) => ({ ts, kind: 'tarkistus' as const, text }))] }
+        : state;
+    }
+    return out;
   } catch {
     return null;
   }
@@ -43,6 +61,7 @@ export function startPersisting(): void {
       tab: s.tab,
       mapMode: s.mapMode,
       spaceMode: s.spaceMode,
+      matrix: serializeMatrix(s.matrix),
     };
     const json = JSON.stringify(data);
     if (json === last) return;

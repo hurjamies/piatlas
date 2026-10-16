@@ -166,3 +166,21 @@ HANNA-nimisolmusta avautuu kolmen Hannan kronologinen verkko: HANNA I → HANNA 
 Polun B symbolinen numerojono 432-suuntaan on ”432”, joka on sama merkkijono kuin IDAn T9-koodi. Tämä näytetään
 merkkijonojen yhtäläisyytenä käyttäjän antamien numeroiden ja koodin välillä. Se ei ole π-havainto. Polun A
 numerot 6-2-9 on johdettu MAXin koodista, joten polun ja koodin yhtäläisyys on rakenteellinen.
+
+## 10. Käyttöliittymä (Matriisi-välilehti)
+
+Tila on `src/state/matrix.ts` (puhtaat apufunktiot: tallennus ja lataus, π-faktat, ajoitussääntö) ja
+`src/state/matrix-actions.ts` (toiminnot). Näkymä on `src/ui/views/MatrixView.tsx` ja osat `src/ui/matrix/`.
+
+- Murupolku: jokainen muru näyttää kerroksen ja yhteyden tyypin; kerrosvaihdon kohdalla erotin ”π-data | tarina”.
+  Kun fokus on tarinaverkossa, näkyy ilmoitus ”Siirryt piin todellisesta datasta symboliseen tarinaverkkoon”.
+- Verkko: fokus keskellä ja enintään 24 kohdetta kehällä (ryhmät vuorotellen), loput listassa. Viiva: matemaattinen
+  yhtenäinen turkoosi, geometrinen violetti, ajallinen pisteviiva, symbolinen katkoviiva. Nuoli = suunnallinen,
+  vinoneliö = kerrosvaihto.
+- Tallennus: tarina, reitti (solmuavaimet + `via`), suunta, tallennetut reitit, loki (500), vierailut (2000),
+  reittitestit ja hypoteesilukitukset paikallisesti (`localStorage`). Virheellinen data korvataan oletuksella
+  kohde kerrallaan, ja ohitukset kirjataan lokiin (`tarkistus`). Muokattua tarinaa ei korvata siemenellä.
+- Reitin tallennus tarkistaa jokaisen reitin osuman, koodin, numeron ja kohdan lähdeaineistosta (`mathFacts`).
+- Reittitestin hypoteesi voidaan lukita SHA-256-tiivisteellä. Ajoitus on `ennen-löydöstä` vain, jos lukitus tehtiin
+  ennen kuin samaa kysymystä (koodit + järjestys + aineisto) oli ajettu. R, siemen ja satunnaisjonot eivät muuta
+  kysymystä.

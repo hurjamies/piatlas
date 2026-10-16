@@ -10,8 +10,9 @@ import type {
   SearchTerm,
   TestRun,
 } from '../core/types';
+import { initialMatrixState, type MatrixState } from './matrix';
 
-export type Tab = 'space' | 'map' | 'digits' | 'tests';
+export type Tab = 'space' | 'map' | 'digits' | 'tests' | 'matrix';
 export type MapMode = 'spiral' | 'atlas' | 'net';
 export type PanelId = 'terms' | 'neighbors' | 'events';
 
@@ -65,6 +66,8 @@ export interface AppState {
   runs: TestRun[];
   prefs: Prefs;
   toast: { text: string; id: number } | null;
+  /** Recursive Story Matrix (docs/MATRIISI.md): tarinamalli, reitti, tallennetut reitit, loki ja reittitestit. */
+  matrix: MatrixState;
 }
 
 type Listener = () => void;
@@ -168,6 +171,7 @@ export const store = createStore<AppState>({
   runs: [],
   prefs: DEFAULT_PREFS,
   toast: null,
+  matrix: initialMatrixState(),
 });
 
 export function useApp<U>(selector: (s: AppState) => U): U {

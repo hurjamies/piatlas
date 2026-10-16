@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { comparePersons, personLabel } from '../../core/matrix/story';
 import { parseHitKey } from '../../core/types';
 import { addEvent, removeEvent, select, toggleEventLink, updateEvent } from '../../state/actions';
+import { toggleEventPerson } from '../../state/matrix-actions';
 import { useApp } from '../../state/store';
 import { fmtDate, fmtN } from '../format';
 
@@ -8,6 +10,8 @@ export function EventsPanel() {
   const events = useApp((s) => s.events);
   const terms = useApp((s) => s.terms);
   const sel = useApp((s) => s.selection);
+  const story = useApp((s) => s.matrix.story);
+  const persons = [...story.persons].sort(comparePersons);
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
   const [note, setNote] = useState('');
@@ -67,6 +71,27 @@ export function EventsPanel() {
                 </button>
               ) : null;
             })}
+          </div>
+          <div className="ev-persons" aria-label="Tarinamatriisin henkilöt">
+            <span className="faint" style={{ fontSize: 12 }}>
+              Henkilöt (tarinaverkko):{' '}
+              {(e.personIds ?? []).length
+                ? (e.personIds ?? []).map((id) => personLabel(story, id)).join(', ')
+                : 'ei liitetty'}
+            </span>
+            <div className="row" style={{ gap: 6 }}>
+              {persons.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="toggle ev-person"
+                  aria-pressed={(e.personIds ?? []).includes(p.id)}
+                  onClick={() => toggleEventPerson(e.id, p.id)}
+                >
+                  <span className="dot" /> {personLabel(story, p)}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="row">
             {sel && (

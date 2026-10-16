@@ -128,7 +128,7 @@ on alle 13 % (odotus 5 %), eli testi ei tuota järjestelmällisesti vääriä po
 
 ## 8. Testit
 
-`npm test` ajaa 59 testiä. Tehtävänannon hyväksymiskriteerit:
+`npm test` ajaa 215 testiä. Tehtävänannon hyväksymiskriteerit:
 
 | Kriteeri | Testi |
 | --- | --- |

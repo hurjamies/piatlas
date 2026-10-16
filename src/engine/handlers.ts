@@ -1,5 +1,6 @@
 // Moottorin käsittelijät. Sama koodi ajetaan Web Workerissa tai varapolkuna pääsäikeessä.
 
+import { RouteTestParams, RouteTestResult, runRouteTest } from '../core/matrix/route-test';
 import { findAllDetailed, findSkip, startPositions } from '../core/search';
 import { MCParams, MCResult, RandomControlParams, RandomControlResult, RunHooks, runMonteCarlo, runRandomControl } from '../core/stats';
 
@@ -28,7 +29,8 @@ export type EngineRequest =
   | { type: 'setDigits'; digits: string }
   | { type: 'search'; specs: SearchSpec[]; limit?: number }
   | { type: 'monteCarlo'; params: MCParams }
-  | { type: 'randomControl'; params: RandomControlParams };
+  | { type: 'randomControl'; params: RandomControlParams }
+  | { type: 'routeTest'; params: RouteTestParams };
 
 export type EngineResponse<R extends EngineRequest> = R extends { type: 'ping' }
   ? 'pong'
@@ -40,7 +42,9 @@ export type EngineResponse<R extends EngineRequest> = R extends { type: 'ping' }
         ? MCResult
         : R extends { type: 'randomControl' }
           ? RandomControlResult
-          : never;
+          : R extends { type: 'routeTest' }
+            ? RouteTestResult
+            : never;
 
 export interface EngineState {
   digits: string;
@@ -85,5 +89,7 @@ export async function handleRequest(state: EngineState, req: EngineRequest, hook
       return runMonteCarlo(req.params, hooks);
     case 'randomControl':
       return runRandomControl(req.params, state.digits, hooks);
+    case 'routeTest':
+      return runRouteTest(req.params, hooks);
   }
 }

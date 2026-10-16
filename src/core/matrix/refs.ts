@@ -16,7 +16,8 @@ export function t9Code(name: string): string | null {
   return r.ok ? r.code : null;
 }
 
-/** Lähtötunnisteet ensin (niiden ilmoitettu koodi), sitten henkilöiden nimet. Sama koodi vain kerran. */
+/** Lähtötunnisteiden nimet ensin, sitten henkilöiden nimet, kaikki T9-koodattuina. Sama koodi vain kerran.
+ * Ilmoitettu koodi tarkistetaan erikseen (story.ts: verifyIdentifiers). */
 export function referenceCodes(model: StoryModel): RefCode[] {
   const out: RefCode[] = [];
   const seen = new Set<string>();

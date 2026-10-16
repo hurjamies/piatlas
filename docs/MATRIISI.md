@@ -48,7 +48,7 @@ minkä särmän kautta siihen tultiin.
 | `junction` | tarina | kahden tai useamman polun yhdistys samassa henkilössä: jokaisen haaran edeltävät ja seuraavat askeleet |
 | `event` | tarina | linkitetyt henkilöt ja osumat, edellinen/seuraava tapahtuma ajassa |
 
-**Silmukoiden esto.** `openStep` ei koskaan lisää reitille solmua, joka on jo reitillä. Jos käyttäjä avaa
+**Silmukoiden esto.** `openEdge` ei koskaan lisää reitille solmua, joka on jo reitillä. Jos käyttäjä avaa
 reitillä jo olevan solmun, reitti katkaistaan takaisin siihen kohtaan (”↺ jo polulla”). Suurin syvyys on
 `MAX_DEPTH = 32`. Kaikki avatut solmut kirjataan (`visited`) ja merkitään käyttöliittymässä.
 

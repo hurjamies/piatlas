@@ -12,6 +12,12 @@ import { shortLabel } from './labels';
 
 const FINDINGS_SHOWN = 6;
 
+/** Löytöjen määrä yhteen suuntaan. Geometrinen kävely raportoi askeleita, ei satunnaisvertailtavia löytöjä. */
+function dirCount(id: string, n: number): string {
+  if (id === 'geo-369') return `${n} ${n === 1 ? 'askel' : 'askelta'}`;
+  return `${n} ${n === 1 ? 'löytö' : 'löytöä'}`;
+}
+
 interface Common {
   env: MatrixEnv;
   visited: Set<string>;
@@ -104,18 +110,26 @@ export function Ops369Panel({ report, ...rest }: Common & { report: Op369Report 
         <span className="faint">Viitekoodit: </span>
         {report.referenceCodes.map((r) => `${r.name} ${r.code}`).join(', ') || '–'}
       </div>
+      <div className="mx-small faint">Jokainen menetelmä ajettiin molempiin suuntiin. Avaa menetelmä nähdäksesi löydöt ja kaikki tarkistukset.</div>
       {report.results.map((r) => (
-        <details key={r.id} className="mx-method" open={!r.nothingNew}>
+        <details key={r.id} className="mx-method" data-testid="matrix-369-method">
           <summary>
             <span className="mx-method-title">{r.title}</span>
             <span className="mx-method-id mono">{r.id}</span>
-            {!r.applicable ? (
-              <span className="mx-chip">ei sovellu</span>
-            ) : r.nothingNew ? (
-              <span className="mx-chip">Ei uutta</span>
-            ) : (
-              <span className="mx-chip gold">{(r.primary?.matches ?? 0) + (r.opposite?.matches ?? 0)} löytöä</span>
-            )}
+            <span className="mx-method-dirs">
+              {!r.applicable ? (
+                <span className="mx-chip">ei sovellu</span>
+              ) : (
+                [r.primary, r.opposite].map(
+                  (d) =>
+                    d && (
+                      <span key={d.direction} className={`mx-chip mono${d.matches ? ' gold' : ''}`}>
+                        {d.direction}: {d.matches ? dirCount(r.id, d.matches) : 'Ei uutta'}
+                      </span>
+                    ),
+                )
+              )}
+            </span>
           </summary>
           <div className="mx-small faint">{r.definition}</div>
           {!r.applicable && <div className="mx-nothing">{r.reasonNotApplicable}</div>}

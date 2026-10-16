@@ -1120,10 +1120,43 @@ svg.chart .grid {
   border-left: 2px dashed var(--mx-tarina);
   border-right: 2px solid var(--mx-pi);
 }
+/* Reunan häivytys: murupolkua voi vierittää siihen suuntaan. */
+.mx-crumbs[data-fade='l'] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 22px);
+  mask-image: linear-gradient(to right, transparent 0, #000 22px);
+}
+.mx-crumbs[data-fade='r'] {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 22px);
+  mask-image: linear-gradient(to left, transparent 0, #000 22px);
+}
+.mx-crumbs[data-fade='lr'] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%);
+}
 .mx-crumbs-foot {
   margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
   font-size: var(--t-xs);
   color: var(--fg-2);
+}
+.mx-runs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mx-run.r-pi {
+  color: var(--teal);
+}
+.mx-run.r-tarina {
+  color: var(--rose);
+}
+.mx-runs-div {
+  color: var(--gold);
 }
 
 /* ---- alasivujen valinta */
@@ -1300,8 +1333,8 @@ svg.chart .grid {
 }
 .mx-key369 {
   flex: none;
-  width: 66px;
-  height: 66px;
+  width: 70px;
+  height: 70px;
   border-radius: 50%;
   display: flex;
   flex-direction: column;
@@ -1324,8 +1357,8 @@ svg.chart .grid {
   line-height: 1;
 }
 .mx-key-sub {
-  font-size: 8.5px;
-  letter-spacing: 0.1em;
+  font-size: 8px;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 .mx-key-help {
@@ -1479,6 +1512,15 @@ svg.chart .grid {
 .mx-chip.bad {
   color: var(--rose);
   border-color: color-mix(in srgb, var(--rose) 50%, transparent);
+}
+.mx-chip.realm.r-pi {
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 35%, transparent);
+}
+.mx-chip.realm.r-tarina {
+  color: var(--rose);
+  border-color: color-mix(in srgb, var(--rose) 35%, transparent);
+  border-style: dashed;
 }
 .mx-chip.cross {
   font-weight: 600;
@@ -1962,10 +2004,20 @@ svg.chart .grid {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--bg);
-  padding: 0 10px 10px;
+  padding: 0 10px;
+}
+.mx-method[open] {
+  padding-bottom: 10px;
+}
+.mx-method-dirs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
 }
 .mx-method > summary {
   min-height: 44px;
+  padding: 7px 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

@@ -626,6 +626,15 @@ describe.skipIf(!HAS_FULL)('matriisi täydellä 1M-aineistolla', () => {
     expect(x.node.facts[0]).toMatchObject({ verified: true, value: 'digits[858511…858513] = "432" ✓' });
     expect(keysOf(byGroup(x, GROUPS.anchor))).toEqual(['hit:432@858511']);
     expect(keysOf(byGroup(x, GROUPS.reportedPositions))).toEqual(['hit:62884@858260', 'hit:6464@858960']);
+    // Määrä ja odotus samalla tuhaterottimella (ennen: "1054 (odotus satunnaisjonossa 1 000)").
+    expect(x.node.facts.find((f) => f.label === 'Koodin osumia')!.value).toBe('1 054 (odotus satunnaisjonossa 1 000)');
+  });
+
+  it('koodin ja osuman määrät tuhaterottimin', () => {
+    const c = expand({ kind: 'code', code: '629' }, fullEnv());
+    expect(c.node.facts.find((f) => f.label === 'Osumia aineistossa')!.value).toBe('1 040 (kaikki alkukohdat, myös päällekkäiset)');
+    const h = expand({ kind: 'hit', code: '432', n: 858511 }, fullEnv());
+    expect(h.node.facts.find((f) => f.label === 'Osuma')!.value).toMatch(/^\d{1,3}( \d{3})*\/1 054 koodin 432 osumista/);
   });
 
   it('IDA @858511 suuntaan 234: HANNA @858610 (Δn +99)', () => {

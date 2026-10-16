@@ -76,6 +76,20 @@ export function startPersisting(): void {
     if (timer) clearTimeout(timer);
     timer = setTimeout(save, 400);
   });
+  // Puhelin voi keskeyttää tai sulkea sovelluksen viiveen aikana (esim. sovelluksen vaihto Androidissa):
+  // odottava tallennus tehdään heti, jotta juuri muokattu tarina tai reitti ei katoa.
+  const flush = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = null;
+    save();
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flush();
+    });
+  }
 }
 
 // ------------------------------------------------------------------ IndexedDB

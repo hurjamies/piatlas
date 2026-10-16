@@ -112,16 +112,16 @@ export function FocusCard({ exp }: { exp: Expansion }) {
       )}
       {pos && (
         <div className="mx-goto" role="group" aria-label="Näytä muissa näkymissä">
-          <button type="button" className="mx-btn" onClick={() => showPiPosition(pos, 'spiraali')} disabled={!pos.code}>
+          <button type="button" className="mx-btn" data-testid="matrix-goto-spiraali" onClick={() => showPiPosition(pos, 'spiraali')} disabled={!pos.code}>
             Spiraali
           </button>
-          <button type="button" className="mx-btn" onClick={() => showPiPosition(pos, '3d')} disabled={!pos.code}>
+          <button type="button" className="mx-btn" data-testid="matrix-goto-3d" onClick={() => showPiPosition(pos, '3d')} disabled={!pos.code}>
             3D
           </button>
-          <button type="button" className="mx-btn" onClick={() => showPiPosition(pos, 'atlas')} disabled={!pos.code}>
+          <button type="button" className="mx-btn" data-testid="matrix-goto-atlas" onClick={() => showPiPosition(pos, 'atlas')} disabled={!pos.code}>
             Atlas/verkko
           </button>
-          <button type="button" className="mx-btn" onClick={() => showPiPosition(pos, 'pi-indeksi')}>
+          <button type="button" className="mx-btn" data-testid="matrix-goto-pi" onClick={() => showPiPosition(pos, 'pi-indeksi')}>
             π-indeksi
           </button>
           {!pos.code && <span className="mx-small faint">Kohta ei ole koodin osuma: kartat näyttävät osumia, joten avaa se π-indeksissä.</span>}

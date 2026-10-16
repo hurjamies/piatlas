@@ -42,6 +42,8 @@ export function EdgeRow({
   const [open, setOpen] = useState(false);
   const key = nodeKey(edge.to);
   const toRealm = realmOf(edge.to);
+  // Kerrosvaihdossa lähtökerros on kohteen vastakkainen kerros (π-data ↔ tarinaverkko).
+  const fromRealm: Realm = edge.crossesRealm ? (toRealm === 'pi' ? 'tarina' : 'pi') : toRealm;
   const metrics = edge.metrics ? Object.entries(edge.metrics) : [];
   return (
     <div className={`mx-edge l-${edge.layer}${edge.crossesRealm ? ' crossing' : ''}`} data-testid="matrix-edge" data-key={key}>
@@ -53,6 +55,15 @@ export function EdgeRow({
             {title}
           </span>
           <LayerBadge layer={edge.layer} />
+          {edge.crossesRealm ? (
+            <span className={`mx-chip cross r-${toRealm}`} title="Yhteys vaihtaa tietokerrosta">
+              {REALM_LABELS[fromRealm]} → {REALM_LABELS[toRealm]}
+            </span>
+          ) : (
+            <span className={`mx-chip realm r-${toRealm}`} title={toRealm === 'pi' ? 'Kohde on laskettua π-dataa' : 'Kohde on käyttäjän tarinaverkkoa'}>
+              {REALM_LABELS[toRealm]}
+            </span>
+          )}
           {edge.direction && edge.domain && (
             <span className="mx-chip dir" title={DIRECTION_SEMANTICS[edge.domain][edge.direction]}>
               {edge.direction} · {DOMAIN_LABELS[edge.domain]}
@@ -61,9 +72,6 @@ export function EdgeRow({
           {edge.op && <span className="mx-chip op">{edge.op.startsWith('369') ? '369' : 'hyppy'}</span>}
           {edge.verified === true && <span className="mx-chip ok">✓ tarkistettu</span>}
           {edge.verified === false && <span className="mx-chip bad">✗ ei täsmää</span>}
-          {edge.crossesRealm && (
-            <span className={`mx-chip cross r-${toRealm}`}>{toRealm === 'tarina' ? '→ tarinaverkko' : '→ π-data'}</span>
-          )}
           {onTrail ? <span className="mx-chip trail">↺ jo polulla</span> : visited ? <span className="mx-chip seen">käyty</span> : null}
         </span>
         {metrics.length > 0 && (

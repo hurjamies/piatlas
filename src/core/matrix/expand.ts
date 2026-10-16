@@ -337,7 +337,7 @@ function expandRoot(ref: NodeRef, c: Ctx): NodeInfo {
     },
     {
       label: 'Koodin osumia',
-      value: `${count} (odotus satunnaisjonossa ${fmtExp(expectedHits(c.N, L))})`,
+      value: `${fmtIndex(count)} (odotus satunnaisjonossa ${fmtExp(expectedHits(c.N, L))})`,
       layer: 'matemaattinen',
     },
     { label: 'Aineisto', value: `N = ${fmtIndex(c.N)} desimaalia (1-pohjainen n)`, layer: 'matemaattinen' },
@@ -496,7 +496,7 @@ function expandCode(ref: Extract<NodeRef, { kind: 'code' }>, c: Ctx): NodeInfo {
   const amb = t9Ambiguity(code);
   const facts: Fact[] = [
     { label: 'Pituus', value: `${L} numeroa`, layer: 'matemaattinen' },
-    { label: 'Osumia aineistossa', value: `${k} (kaikki alkukohdat, myös päällekkäiset)`, layer: 'matemaattinen' },
+    { label: 'Osumia aineistossa', value: `${fmtIndex(k)} (kaikki alkukohdat, myös päällekkäiset)`, layer: 'matemaattinen' },
     {
       label: 'Odotettu määrä',
       value: `(N − L + 1) / 10^L = (${fmtIndex(c.N)} − ${L} + 1) / 10^${L} ≈ ${fmtExp(expected)}`,
@@ -677,7 +677,7 @@ function expandHit(ref: Extract<NodeRef, { kind: 'hit' }>, c: Ctx): NodeInfo {
   const names = namesForCode(c.model, code);
   const facts: Fact[] = [
     check,
-    { label: 'Osuma', value: `${idx + 1}/${hits.length} koodin ${code} osumista (nouseva n)`, layer: 'matemaattinen' },
+    { label: 'Osuma', value: `${fmtIndex(idx + 1)}/${fmtIndex(hits.length)} koodin ${code} osumista (nouseva n)`, layer: 'matemaattinen' },
     {
       label: 'Konteksti',
       value: `${ctxSlice.start}…${ctxSlice.end}: ${ctxSlice.text.slice(0, off)}[${ctxSlice.text.slice(off, off + L)}]${ctxSlice.text.slice(off + L)}`,

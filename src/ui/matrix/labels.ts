@@ -150,6 +150,17 @@ export function fmtMetricValue(key: string, v: number | string): string {
   return String(Number(v.toPrecision(6))).replace('.', ',');
 }
 
+/** Peräkkäiset samat kerrokset ryhminä: [pi, pi, tarina] → [{pi, 2}, {tarina, 1}]. Ryhmien raja = kerrosvaihto. */
+export function realmRuns(realms: Realm[]): { realm: Realm; count: number }[] {
+  const out: { realm: Realm; count: number }[] = [];
+  for (const r of realms) {
+    const last = out[out.length - 1];
+    if (last && last.realm === r) last.count++;
+    else out.push({ realm: r, count: 1 });
+  }
+  return out;
+}
+
 /** "1 askel" / "3 askelta" */
 export function stepsText(k: number): string {
   return `${k} ${k === 1 ? 'askel' : 'askelta'}`;

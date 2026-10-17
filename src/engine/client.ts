@@ -23,6 +23,8 @@ export class EngineClient {
   private lastDigits = '';
   private ready: Promise<void>;
   private listeners = new Set<(m: EngineMode) => void>();
+  /** Pääsäikeessä käynnissä olevat laskennat: cancel() merkitsee ne, ja seuraava välitauko keskeyttää laskennan. */
+  private inlineRuns = new Set<{ cancelled: boolean }>();
 
   constructor() {
     this.ready = this.start();
@@ -107,16 +109,29 @@ export class EngineClient {
       }
     }
     this.inlineState.digits = this.lastDigits;
-    const result = await handleRequest(this.inlineState, req, {
-      onProgress,
-      yieldEvery: 20,
-      yieldFn: () => new Promise((r) => setTimeout(r, 0)),
-    });
-    return result as EngineResponse<R>;
+    const run = { cancelled: false };
+    this.inlineRuns.add(run);
+    try {
+      const result = await handleRequest(this.inlineState, req, {
+        onProgress,
+        yieldEvery: 20,
+        yieldFn: async () => {
+          await new Promise((r) => setTimeout(r, 0));
+          if (run.cancelled) throw new Error('Keskeytetty');
+        },
+      });
+      return result as EngineResponse<R>;
+    } finally {
+      this.inlineRuns.delete(run);
+    }
   }
 
-  /** Keskeyttää käynnissä olevan laskennan (worker käynnistetään uudelleen). */
+  /**
+   * Keskeyttää käynnissä olevan laskennan. Worker käynnistetään uudelleen; pääsäikeessä laskenta keskeytyy
+   * seuraavassa välitauossa (virhe "Keskeytetty").
+   */
   async cancel(): Promise<void> {
+    for (const run of this.inlineRuns) run.cancelled = true;
     if (!this.worker) return;
     this.worker.terminate();
     this.worker = null;

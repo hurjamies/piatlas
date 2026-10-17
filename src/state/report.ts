@@ -1,10 +1,12 @@
 // Tutkimusraportin vienti: JSON (kaikki toistamiseen tarvittava) ja CSV (osumat).
 
 import { digitsAt } from '../core/digits';
+import { JUMP_VERSION, MATRIX_VERSION, nodeKey, OPS369_VERSION, ROUTE_TEST_VERSION } from '../core/matrix/types';
 import { mapIndex, faceBits, faceSignLabel, toP5 } from '../core/mapping';
 import { benjaminiHochberg, bonferroni } from '../core/stats';
 import { eventTimestamp, hitKey, termEncoding } from '../core/types';
 import { ENCODING_VERSION, FORMULA_TEXT, FORMULA_VERSION, NET_VERSION, STATS_VERSION } from '../core/version';
+import { routeBH } from './matrix';
 import { store } from './store';
 
 declare const __APP_VERSION__: string;
@@ -14,6 +16,8 @@ export function buildReport() {
   const ps = s.runs.map((r) => r.summary.pValue);
   const q = benjaminiHochberg(ps);
   const b = bonferroni(ps);
+  // m = kaikki ajot (rajaamaton hakemisto); tallennuksesta rajattujen ajojen p-arvot oletetaan 1:ksi.
+  const routeQ = routeBH(s.matrix.routeRuns.map((r) => r.pValue), s.matrix.runIndex.total);
   const linkTs = new Map<string, number | null>();
   for (const e of s.events) for (const k of e.linkedHits) if (!linkTs.has(k)) linkTs.set(k, eventTimestamp(e));
   const interesting = new Set<string>([hitKey(s.anchor)]);
@@ -24,7 +28,16 @@ export function buildReport() {
     app: 'PI ATLAS — The Geometry of a Life',
     appVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev',
     exportedAt: new Date().toISOString(),
-    versions: { formula: FORMULA_VERSION, encoding: ENCODING_VERSION, stats: STATS_VERSION, net: NET_VERSION },
+    versions: {
+      formula: FORMULA_VERSION,
+      encoding: ENCODING_VERSION,
+      stats: STATS_VERSION,
+      net: NET_VERSION,
+      matrix: MATRIX_VERSION,
+      ops369: OPS369_VERSION,
+      jump: JUMP_VERSION,
+      routeTest: ROUTE_TEST_VERSION,
+    },
     formulas: FORMULA_TEXT,
     dataset: s.dataset.info,
     anchor: s.anchor,
@@ -72,6 +85,25 @@ export function buildReport() {
     events: s.events,
     audit: s.audit,
     interpretationNotes: s.notes,
+    matrix: {
+      versions: { matrix: MATRIX_VERSION, ops369: OPS369_VERSION, jump: JUMP_VERSION, routeTest: ROUTE_TEST_VERSION },
+      note:
+        'Tarinamalli (story) ja reittien tulkinnat ovat käyttäjän symbolista tietoa, eivät matemaattisia havaintoja. ' +
+        'Reittien π-faktat (mathFacts) on tarkistettu lähdeaineistosta tallennushetkellä.',
+      story: s.matrix.story,
+      direction: s.matrix.direction,
+      currentTrail: s.matrix.trail.map((st) => ({ key: nodeKey(st.ref), via: st.via })),
+      savedRoutes: s.matrix.saved.map((r) => ({ ...r, trail: r.trail.map((st) => ({ key: nodeKey(st.ref), via: st.via })) })),
+      routeLocks: s.matrix.locks,
+      routeRuns: s.matrix.routeRuns.map((r, i) => ({ ...r, qBH: routeQ[i] })),
+      multipleComparisons: {
+        routeTestsRun: Math.max(s.matrix.runIndex.total, s.matrix.routeRuns.length),
+        routeRunsStored: s.matrix.routeRuns.length,
+        routeRunIndex: s.matrix.runIndex,
+        note: 'Matriisin reittitestit ovat oma testiperheensä (BH-q yllä). Jälkikäteen valitut reitit ovat eksploratiivisia.',
+      },
+      log: s.matrix.log,
+    },
   };
 }
 

@@ -16,6 +16,7 @@ import {
 import { nearestIndex } from '../../core/search';
 import { eventTimestamp, hitKey, termEncoding } from '../../core/types';
 import { select, setAnchor, setNote, setTab, toggleEventLink } from '../../state/actions';
+import { openMatrixAtHit } from '../../state/matrix-actions';
 import { store, useApp } from '../../state/store';
 import { fmtD, fmtDate, fmtDec, fmtExpected, fmtN, fmtSigned } from '../format';
 
@@ -152,6 +153,16 @@ export function HitDetails({ termId, n, compact = false }: { termId: string; n: 
           <button className="btn small" onClick={() => setTab('map')}>
             Kartta
           </button>
+          {term.mode === 'contiguous' && (
+            <button
+              className="btn small"
+              onClick={() => openMatrixAtHit(termId, n)}
+              title="Avaa osuma tarinamatriisissa: tyhjällä polulla juuri → koodi → osuma, muuten nykyisen polun loppuun"
+              data-testid="hit-open-matrix"
+            >
+              Matriisi
+            </button>
+          )}
           {!isAnchor && (
             <button className="btn small ghost" onClick={() => setAnchor({ termId, n })}>
               Aseta ankkuriksi

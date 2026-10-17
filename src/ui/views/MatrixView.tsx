@@ -1,4 +1,4 @@
-// Matriisi-välilehti: Recursive Story Matrix (docs/MATRIISI.md). Murupolku ylhäällä, ohjaus, fokussolmu,
+// Matriisi-välilehti: Recursive Story Matrix (docs/MATRIISI.md). Murupolku ylhäällä, solmuvalitsin, ohjaus, fokussolmu,
 // 369- ja hyppysääntötulokset, tarinarakenteet, verkkokuva ja kaikki yhteydet listana. Alasivut: Tarina,
 // Reitit ja Loki. π-data ja symbolinen tarinaverkko pidetään näkyvästi erillään.
 import { useCallback, useMemo } from 'react';
@@ -14,6 +14,7 @@ import { FocusCard, IdentifiersCard, RealmBanner } from '../matrix/FocusCard';
 import { useMatrixEnv, useTrailSets } from '../matrix/hooks';
 import { LogPage } from '../matrix/LogPage';
 import { NetGraph } from '../matrix/NetGraph';
+import { NodePicker } from '../matrix/NodePicker';
 import { JumpPanel, Ops369Panel } from '../matrix/ResultPanels';
 import { RoutesPage } from '../matrix/RoutesPage';
 import { StoryEditor } from '../matrix/StoryEditor';
@@ -75,6 +76,7 @@ function Explorer() {
   return (
     <>
       <RealmBanner trail={trail} />
+      <NodePicker env={env} />
       <Controls exp={exp} env={env} />
       <FocusCard exp={exp} />
       {step.ref.kind === 'root' && <IdentifiersCard env={env} />}
@@ -82,7 +84,8 @@ function Explorer() {
       {lastJump && nodeKey(lastJump.target) === focusKey && <JumpPanel res={lastJump} {...common} />}
       <StoryStructures exp={exp} env={env} onOpen={onOpen} />
       {view === 'verkko' && <NetGraph exp={exp} {...common} />}
-      <EdgeList key={`${focusKey}|${env.direction}`} exp={exp} {...common} />
+      {/* Avain on fokussolmu: näytettyjen rivien määrä säilyy ryhmittäin, kun suunta vaihtuu. */}
+      <EdgeList key={focusKey} exp={exp} {...common} />
     </>
   );
 }

@@ -13,6 +13,9 @@
 //  - expected = odotettu satunnaisosumien määrä samoille tarkistuksille. Kun tarkistettava kohta on
 //    päällekkäin kohteen omien numeroiden kanssa, todennäköisyys ehdollistetaan tunnettuihin numeroihin
 //    (tunnettu numero täsmää → kerroin 1, ei täsmää → 0, tuntematon → 1/10).
+//  - reported = raportoidut askeleet: geo-369:n kävelyaskeleet 3, 6 ja 9 tuotetaan aina, kun ehdokkaita riittää.
+//    Ne ovat avattavia särmiä, mutta eivät löytöjä: matches = 0, eivätkä ne vaikuta nothingNew- tai
+//    nothingNewOverall-arvoon eivätkä yhteenvedon löytömäärään.
 
 import { FIB } from '../fibonacci';
 import { chordDistance, mapIndex, Vec3 } from '../mapping';
@@ -38,6 +41,8 @@ export interface OpDirectionResult {
   domain: DirectionDomain | null;
   checks: OpCheck[];
   findings: MatrixEdge[];
+  /** Aina tuotettavat raportoidut askeleet (geo-369). Eivät ole löytöjä: eivät sisälly matches-arvoon. Muilla tyhjä. */
+  reported: MatrixEdge[];
   matches: number;
   expected: number | null;
   expectedNote: string;
@@ -119,13 +124,15 @@ export const OPS369_DEFINITIONS: Record<Op369Id, { title: string; definition: st
       '3D-lähimmän naapurin kävely viitekoodien osumien joukossa oktaedrikartalla (mapIndex): jokainen askel ' +
       'lähimpään (chord) vierailemattomaan kohtaan, jonka atsimuutti atan2(y, x) on suuntaan 234 vastapäivään ja ' +
       '432 myötäpäivään (0 < Δφ < π). Tasatilanteessa pienempi n. Raportoidaan askeleet 3, 6 ja 9. ' +
-      'Reitti on algoritminen valinta, ei piin ominaisuus.',
+      'Reitti on algoritminen valinta, ei piin ominaisuus. Askeleet tuotetaan aina, kun ehdokkaita riittää, joten ne ' +
+      'ovat raportoituja tarkistuksia, eivät löytöjä: ne eivät vaikuta ”Ei uutta” -tulokseen.',
   },
   'fib-3k': {
     title: 'Fibonacci F₃ₖ',
     definition:
       'Kohdat n ± F_{3k}, k = 1…7 (F3 = 2, F6 = 8, F9 = 34, F12 = 144, F15 = 610, F18 = 2584, F21 = 10946): ' +
-      'alkaako niistä viitekoodin osuma? Odotus Σ 7 · 10^−L (päällekkäisissä kohdissa ehdollistettu kohteen numeroihin).',
+      'alkaako niistä viitekoodin osuma? Odotus Σ 7 · 10^−L (päällekkäisissä kohdissa ehdollistettu kohteen numeroihin). ' +
+      'Suhde n ± F_k on spiraalinaapuruus (geometrinen, alue spiraali), sama kuin osumasolmun Fibonacci-naapureissa.',
   },
 };
 
@@ -437,14 +444,34 @@ type FamilyId = 'offset-369' | 'skip-369' | 'fib-3k';
 interface Family {
   id: FamilyId;
   domain: DirectionDomain;
+  /** Löytösärmän tyyppi. n ± F_k on spiraalinaapuruus → geometrinen (sama kuin expand.ts:n Fibonacci-naapureissa). */
+  layer: Layer;
   amounts: readonly { a: number; tag: string }[];
   contiguous: boolean;
 }
 
 const FAMILIES: Record<FamilyId, Family> = {
-  'offset-369': { id: 'offset-369', domain: 'pi-indeksi', amounts: STEPS_369.map((a) => ({ a, tag: String(a) })), contiguous: true },
-  'skip-369': { id: 'skip-369', domain: 'pi-indeksi', amounts: STEPS_369.map((a) => ({ a, tag: String(a) })), contiguous: false },
-  'fib-3k': { id: 'fib-3k', domain: 'spiraali', amounts: FIB_3K.map(({ k, F }) => ({ a: F, tag: `F${k} (${F})` })), contiguous: true },
+  'offset-369': {
+    id: 'offset-369',
+    domain: 'pi-indeksi',
+    layer: 'matemaattinen',
+    amounts: STEPS_369.map((a) => ({ a, tag: String(a) })),
+    contiguous: true,
+  },
+  'skip-369': {
+    id: 'skip-369',
+    domain: 'pi-indeksi',
+    layer: 'matemaattinen',
+    amounts: STEPS_369.map((a) => ({ a, tag: String(a) })),
+    contiguous: false,
+  },
+  'fib-3k': {
+    id: 'fib-3k',
+    domain: 'spiraali',
+    layer: 'geometrinen',
+    amounts: FIB_3K.map(({ k, F }) => ({ a: F, tag: `F${k} (${F})` })),
+    contiguous: true,
+  },
 };
 
 function placeFor(f: Family, n: number, sigma: number, a: number): { start: number; stride: number } {
@@ -510,9 +537,11 @@ function placementEdge(ctx: Ctx, f: Family, d: Direction, span: Span, at: Placem
       d,
       f.domain,
       `${src}n ${sgn(sigma)} ${tag} → ${r.name} ${r.code} @${fmtInt(start)}`,
-      `369:${f.id} · ${d} · kohdat ${start}–${start + r.L - 1} = ${pl.read} · n = ${span.n} ${sgn(sigma)} ${a}`,
+      `369:${f.id} · ${d} · kohdat ${start}–${start + r.L - 1} = ${pl.read} · n = ${span.n} ${sgn(sigma)} ${a}` +
+        (f.id === 'fib-3k' ? ' · spiraalinaapuruus n ± F_k (Vogelin spiraali; kartoitus on valinta, ei piin ominaisuus)' : ''),
       { n: start, 'Δn': sigma * a, L: r.L, ...(viaHit ? { lähtö: span.n } : {}) },
       verifyHit(ctx.digits, r.code, start),
+      f.layer,
     );
   }
   const to: NodeRef = { kind: 'position', n: pl.last };
@@ -577,6 +606,7 @@ function familySingle(ctx: Ctx, f: Family, span: Span, d: Direction): OpDirectio
     domain: f.domain,
     checks,
     findings,
+    reported: [],
     matches,
     expected,
     expectedNote:
@@ -630,6 +660,7 @@ function familyAggregate(ctx: Ctx, f: Family, code: string, hits: Int32Array, d:
     domain: f.domain,
     checks,
     findings,
+    reported: [],
     matches,
     expected,
     expectedNote:
@@ -721,6 +752,7 @@ function residueSingle(ctx: Ctx, id: 'mod-9' | 'digital-root', span: Span, d: Di
     domain: 'pi-indeksi',
     checks,
     findings,
+    reported: [],
     matches,
     expected: counted * rate,
     expectedNote: `Perusosuus ${id === 'mod-9' ? '1/9' : '1/3'} jokaiselle verratulle Δn:lle (${counted} vertailua). ${SAME_INFO}`,
@@ -763,6 +795,7 @@ function residueValues(
     domain,
     checks,
     findings: [],
+    reported: [],
     matches: 0,
     expected: null,
     expectedNote: fromUser
@@ -845,21 +878,25 @@ function geoWalk(ctx: Ctx, start: Span, d: Direction): { steps: GeoStep[]; point
   return { steps, pointCount: pts.n.length };
 }
 
+/**
+ * Kävelyn askeleet 3, 6 ja 9 ovat raportoituja askeleita (`reported`), eivät löytöjä: ne syntyvät aina, kun
+ * ehdokkaita riittää. Siksi matches = 0, findings = [] ja tarkistusten match = false.
+ */
 function geoDirection(ctx: Ctx, start: Span, d: Direction): OpDirectionResult {
   const { steps, pointCount } = geoWalk(ctx, start, d);
   const checks: OpCheck[] = [];
-  const findings: MatrixEdge[] = [];
+  const reported: MatrixEdge[] = [];
   const rot = d === '234' ? 'vastapäivään' : 'myötäpäivään';
   for (let s = 1; s <= 9; s++) {
     const st = steps[s - 1];
-    const reported = s % 3 === 0;
+    const isReported = s % 3 === 0;
     if (!st) {
       checks.push({
         label: `askel ${s}`,
         value: 'kävely pysähtyi: ei vierailematonta ehdokasta tällä puolella',
         match: false,
         position: null,
-        detail: reported ? 'raportoitava askel puuttuu' : undefined,
+        detail: isReported ? 'raportoitava askel puuttuu' : undefined,
       });
       continue;
     }
@@ -867,12 +904,12 @@ function geoDirection(ctx: Ctx, start: Span, d: Direction): OpDirectionResult {
     checks.push({
       label: `askel ${s}`,
       value: `${st.ref.name} ${st.ref.code} @${fmtInt(st.n)} · chord ${fmtDec(st.chord, 4)} · Δφ ${fmtDec(deg, 1)}° ${rot}`,
-      match: reported,
+      match: false,
       position: st.n,
-      detail: reported ? 'raportoitu askel (3, 6, 9)' : undefined,
+      detail: isReported ? 'raportoitu askel (3, 6, 9): tuotetaan aina, ei löytö' : undefined,
     });
-    if (reported) {
-      findings.push(
+    if (isReported) {
+      reported.push(
         makeEdge(
           ctx,
           'geo-369',
@@ -892,12 +929,14 @@ function geoDirection(ctx: Ctx, start: Span, d: Direction): OpDirectionResult {
     direction: d,
     domain: 'oktaedri',
     checks,
-    findings,
-    matches: findings.length,
+    findings: [],
+    reported,
+    matches: 0,
     expected: null,
     expectedNote:
       'Odotusta ei määritellä: kävely on algoritminen valinta valitussa kartoituksessa (mapIndex). Askeleet 3, 6 ja 9 ' +
-      `löytyvät aina, kun ehdokkaita riittää, joten ne eivät ole satunnaisvertailu. Pisteitä ${pointCount}; kävely ${steps.length}/9 askelta.`,
+      'tuotetaan aina, kun ehdokkaita riittää, joten ne eivät ole satunnaisvertailu eivätkä löytöjä (eivät vaikuta ' +
+      `”Ei uutta” -tulokseen). Pisteitä ${pointCount}; kävely ${steps.length}/9 askelta.`,
   };
 }
 
@@ -988,29 +1027,30 @@ export function run369(target: NodeRef, env: MatrixEnv, ranAt: string): Op369Rep
   const results = OP369_IDS.map((id) => runMethod(id, plan, ctx, env.direction));
 
   const applicable = results.filter((r) => r.applicable);
-  const nothingNewOverall = results.every((r) => r.nothingNew);
+  // Vain vertailumenetelmät ratkaisevat ”Ei uutta” -tuloksen: geo-369:n askeleet raportoidaan aina, eivätkä ne ole löytöjä.
+  const nothingNewOverall = results.filter((r) => r.id !== 'geo-369').every((r) => r.nothingNew);
+  let found = 0;
+  let exp = 0;
+  let geo = 0;
+  for (const r of applicable) {
+    for (const dr of [r.primary, r.opposite]) {
+      if (!dr) continue;
+      geo += dr.reported.length;
+      found += dr.matches;
+      if (r.id !== 'geo-369' && dr.expected != null) exp += dr.expected;
+    }
+  }
+  const geoText = geo ? `geo-369: ${geo} raportoitua kävelyaskelta (tuotetaan aina, eivät ole löytöjä; odotusta ei määritellä)` : '';
   let summary: string;
   if (!applicable.length) {
     summary = `Ei sovellettavia menetelmiä: ${plan.kind === 'none' ? plan.reason : 'ei laskettavaa'}`;
   } else if (nothingNewOverall) {
     summary = 'Ei uutta: mikään menetelmä ei löytänyt yhteyttä.';
     if (plan.kind === 'values') summary += ` Mod 9 ja digitaalinen juuri ${plan.fromUser ? USER_NOTE : 'laskettu koodin numerosta'}.`;
+    if (geoText) summary += ` Lisäksi ${geoText}.`;
   } else {
-    let found = 0;
-    let exp = 0;
-    let geo = 0;
-    for (const r of applicable) {
-      for (const dr of [r.primary, r.opposite]) {
-        if (!dr) continue;
-        if (r.id === 'geo-369') geo += dr.matches;
-        else {
-          found += dr.matches;
-          if (dr.expected != null) exp += dr.expected;
-        }
-      }
-    }
     summary = `${applicable.length} menetelmää, ${found} löytöä, odotus ${fmtExpectedFi(exp)}`;
-    if (geo) summary += `; geo-369: ${geo} raportoitua kävelyaskelta (odotusta ei määritellä)`;
+    if (geoText) summary += `; ${geoText}`;
     summary += '.';
   }
 

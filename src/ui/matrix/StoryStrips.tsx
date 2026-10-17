@@ -114,6 +114,11 @@ function HomonymStrip({ name, env, exp, onOpen }: { name: string; env: MatrixEnv
           );
         })}
       </div>
+      {chron.conflict && (
+        <div className="note warn" role="alert" data-testid="matrix-homonyms-conflict">
+          {chron.conflict}
+        </div>
+      )}
       <div className="mx-small faint">
         Peruste: {CHRONOLOGY_LABELS[chron.basis]}. Roomalainen numero on samannimisten järjestys, ei polun symbolinen
         numero. Sama nimi ja T9-koodi eivät tee henkilöistä samaa henkilöä.

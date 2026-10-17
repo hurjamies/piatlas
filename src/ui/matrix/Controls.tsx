@@ -4,10 +4,11 @@ import { useMemo, useState } from 'react';
 import { JUMP_DEFINITIONS, JUMP_IDS, JUMP_NOTE } from '../../core/matrix/jumps';
 import type { Expansion, HypothesisTiming, MatrixEnv } from '../../core/matrix/types';
 import { HYPOTHESIS_LABELS } from '../../core/matrix/types';
-import { evaluateRouteTiming, routeMathFacts } from '../../state/matrix';
+import { lockFitsRoute, routeMathFacts } from '../../state/matrix';
 import { runJumpOp, runOps369, saveRoute, setDirection, startFirstTestRoute } from '../../state/matrix-actions';
 import { useApp } from '../../state/store';
 import { fmtDateTime } from '../format';
+import { LayerBadge } from './bits';
 import { useTrailInfo } from './hooks';
 import { directionDomains, directionExplanation, truncate } from './labels';
 
@@ -101,17 +102,22 @@ export function Controls({ exp, env }: { exp: Expansion; env: MatrixEnv }) {
 function SaveRouteForm({ env, onDone }: { env: MatrixEnv; onDone: () => void }) {
   const trail = useApp((s) => s.matrix.trail);
   const locks = useApp((s) => s.matrix.locks);
-  const runs = useApp((s) => s.matrix.routeRuns);
+  const runIndex = useApp((s) => s.matrix.runIndex);
+  const log = useApp((s) => s.matrix.log);
   const anchor = useApp((s) => s.anchor);
   const infos = useTrailInfo(env);
   const defaultTitle = truncate(infos.slice(1).map((i) => i.title).join(' → ') || 'Lähtöankkuri', 90);
   const [title, setTitle] = useState('');
   const [interp, setInterp] = useState('');
   const [timing, setTiming] = useState<HypothesisTiming>('ei-tiedossa');
-  const valid = useMemo(
-    () => locks.filter((l) => evaluateRouteTiming(l, runs, l.codes, l.order, l.datasetSha).preregistered).reverse(),
-    [locks, runs],
+  // Vain lukitukset, jotka koskevat juuri tämän reitin koodeja ja edeltävät reitin π-solmujen avaamista ja
+  // saman koodijoukon ensimmäistä ajoa (lockFitsRoute). Viimeisimmän hylätyn lukituksen syy näytetään.
+  const checked = useMemo(
+    () => locks.map((l) => ({ lock: l, fit: lockFitsRoute(l, runIndex, { trail, story: env.story, log }) })).reverse(),
+    [locks, runIndex, trail, env.story, log],
   );
+  const valid = checked.filter((c) => c.fit.ok).map((c) => c.lock);
+  const rejected = checked.find((c) => !c.fit.ok) ?? null;
   const [lockId, setLockId] = useState<string>('');
   const facts = useMemo(() => routeMathFacts(trail, env.digits, anchor, env.story), [trail, env, anchor]);
   return (
@@ -156,12 +162,17 @@ function SaveRouteForm({ env, onDone }: { env: MatrixEnv; onDone: () => void }) 
         </label>
       )}
       {!valid.length && (
-        <div className="mx-small faint">
-          ”{HYPOTHESIS_LABELS['ennen-löydöstä']}” on mahdollinen vain, jos hypoteesi on lukittu SHA-256-tiivisteellä
-          ennen saman reittikysymyksen ensimmäistä ajoa (Reitit → reittitesti).
+        <div className="mx-small faint" data-testid="matrix-save-lock-help">
+          ”{HYPOTHESIS_LABELS['ennen-löydöstä']}” on mahdollinen vain, jos tämän reitin koodien hypoteesi on lukittu
+          SHA-256-tiivisteellä tällä laitteella ennen reitin π-solmujen avaamista ja ennen saman koodijoukon ensimmäistä
+          ajoa (Reitit → reittitesti). Tehtävänannon reitit ovat aina ”{HYPOTHESIS_LABELS['löydön-jälkeen']}”.
+          {rejected && ` Viimeisin lukitus ei kelpaa: ${rejected.fit.reason}`}
         </div>
       )}
-      <div className="eyebrow">π-faktat tarkistetaan tallennettaessa</div>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+        <span className="eyebrow">π-faktat tarkistetaan tallennettaessa</span>
+        <LayerBadge layer="matemaattinen" />
+      </div>
       <ul className="mx-factlist">
         {facts.map((f) => (
           <li key={f} className={f.includes('✗') ? 'bad' : ''}>

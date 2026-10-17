@@ -6,6 +6,7 @@ import { mapIndex, faceBits, faceSignLabel, toP5 } from '../core/mapping';
 import { benjaminiHochberg, bonferroni } from '../core/stats';
 import { eventTimestamp, hitKey, termEncoding } from '../core/types';
 import { ENCODING_VERSION, FORMULA_TEXT, FORMULA_VERSION, NET_VERSION, STATS_VERSION } from '../core/version';
+import { routeBH } from './matrix';
 import { store } from './store';
 
 declare const __APP_VERSION__: string;
@@ -15,7 +16,8 @@ export function buildReport() {
   const ps = s.runs.map((r) => r.summary.pValue);
   const q = benjaminiHochberg(ps);
   const b = bonferroni(ps);
-  const routeQ = benjaminiHochberg(s.matrix.routeRuns.map((r) => r.pValue));
+  // m = kaikki ajot (rajaamaton hakemisto); tallennuksesta rajattujen ajojen p-arvot oletetaan 1:ksi.
+  const routeQ = routeBH(s.matrix.routeRuns.map((r) => r.pValue), s.matrix.runIndex.total);
   const linkTs = new Map<string, number | null>();
   for (const e of s.events) for (const k of e.linkedHits) if (!linkTs.has(k)) linkTs.set(k, eventTimestamp(e));
   const interesting = new Set<string>([hitKey(s.anchor)]);
@@ -95,7 +97,9 @@ export function buildReport() {
       routeLocks: s.matrix.locks,
       routeRuns: s.matrix.routeRuns.map((r, i) => ({ ...r, qBH: routeQ[i] })),
       multipleComparisons: {
-        routeTestsRun: s.matrix.routeRuns.length,
+        routeTestsRun: Math.max(s.matrix.runIndex.total, s.matrix.routeRuns.length),
+        routeRunsStored: s.matrix.routeRuns.length,
+        routeRunIndex: s.matrix.runIndex,
         note: 'Matriisin reittitestit ovat oma testiperheensä (BH-q yllä). Jälkikäteen valitut reitit ovat eksploratiivisia.',
       },
       log: s.matrix.log,

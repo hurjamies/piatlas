@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { digitsAt } from '../src/core/digits';
 import { verifyHit } from '../src/core/matrix/hits';
+import { expand, GROUPS } from '../src/core/matrix/expand';
 import { JUMP_DEFINITIONS, JUMP_IDS, JUMP_NOTE, runJump } from '../src/core/matrix/jumps';
 import {
   DISCLAIMER_369,
@@ -15,7 +16,7 @@ import {
 import { referenceCodes } from '../src/core/matrix/refs';
 import { createSeedStory } from '../src/core/matrix/seed';
 import type { Direction, MatrixEdge, MatrixEnv, NodeRef } from '../src/core/matrix/types';
-import { JUMP_VERSION, OPS369_VERSION } from '../src/core/matrix/types';
+import { JUMP_VERSION, nodeKey, OPS369_VERSION } from '../src/core/matrix/types';
 import { createRng } from '../src/core/random';
 import { FULL, HAS_FULL } from './helpers';
 
@@ -46,15 +47,19 @@ function synthetic(plants: [number, string][] = [], N = 3000): string {
 
 const result = (r: Op369Report, id: string): Op369Result => r.results.find((x) => x.id === id)!;
 const allFindings = (r: Op369Result): MatrixEdge[] => [...(r.primary?.findings ?? []), ...(r.opposite?.findings ?? [])];
+const allReported = (r: Op369Result): MatrixEdge[] => [...(r.primary?.reported ?? []), ...(r.opposite?.reported ?? [])];
 
-/** Jokainen löytö viittaa π-solmuun, joka täsmää lähdeaineistoon. */
+/** n ± F_k (fib-3k) on spiraalinaapuruus ja geo-369 kävely kartoituksessa: geometrinen. Muut: matemaattinen. */
+const LAYER_OF: Record<string, string> = { 'geo-369': 'geometrinen', 'fib-3k': 'geometrinen' };
+
+/** Jokainen löytö ja raportoitu askel viittaa π-solmuun, joka täsmää lähdeaineistoon. */
 function expectFindingsVerified(digits: string, r: Op369Report): void {
   for (const m of r.results) {
-    for (const e of allFindings(m)) {
+    for (const e of [...allFindings(m), ...allReported(m)]) {
       expect(e.verified).toBe(true);
       expect(e.op).toBe(`369:${m.id}`);
       expect(e.group).toBe(`369 · ${m.title}`);
-      expect(e.layer).toBe(m.id === 'geo-369' ? 'geometrinen' : 'matemaattinen');
+      expect(e.layer).toBe(LAYER_OF[m.id] ?? 'matemaattinen');
       if (e.to.kind === 'hit') expect(verifyHit(digits, e.to.code, e.to.n)).toBe(true);
       else {
         // hyppyjonon löytö: kohdat alku, alku + askel, … lukevat koodin
@@ -82,11 +87,19 @@ function expectConsistent(r: Op369Report): void {
     for (const d of [m.primary!, m.opposite!]) {
       expect(d.findings.length).toBeLessThanOrEqual(d.matches);
       if (d.matches < 1000) expect(d.findings.length).toBe(d.matches);
+      // Raportoidut askeleet vain geometrisessa kävelyssä, eikä niitä lasketa löydöiksi.
+      if (m.id === 'geo-369') {
+        expect(d.matches).toBe(0);
+        expect(d.findings).toEqual([]);
+        expect(d.checks.every((c) => !c.match)).toBe(true);
+      } else expect(d.reported).toEqual([]);
     }
     expect(m.nothingNew).toBe(m.primary!.matches + m.opposite!.matches === 0);
     expect(m.nothingNew).toBe(allFindings(m).length === 0);
   }
-  expect(r.nothingNewOverall).toBe(r.results.every((m) => m.nothingNew));
+  // Vain vertailumenetelmät ratkaisevat kokonaistuloksen (geo-369:n askeleet tuotetaan aina).
+  expect(r.nothingNewOverall).toBe(r.results.filter((m) => m.id !== 'geo-369').every((m) => m.nothingNew));
+  if (r.nothingNewOverall && r.results.some((m) => m.applicable)) expect(r.summary).toMatch(/^Ei uutta: /);
   expect(r.disclaimer).toBe(DISCLAIMER_369);
   expect(`${r.summary} ${JSON.stringify(r.results)}`).not.toMatch(/merkitykselli|merkitsevä|todistaa/i);
 }
@@ -169,6 +182,24 @@ describe('369 synteettisellä aineistolla (istutetut viitekoodit)', () => {
     expect(fib.primary!.findings.map((e) => e.to)).toEqual([{ kind: 'hit', code: '629', n: T + 34 }]);
     expect(fib.opposite!.findings.map((e) => e.to)).toEqual([{ kind: 'hit', code: '72552', n: T - 144 }]);
     expect(fib.primary!.checks).toHaveLength(7 * 6);
+  });
+
+  it('n ± F_k: sama luokitus (geometrinen, spiraali) 369 fib-3k:ssa ja osumasolmun Fibonacci-naapureissa', () => {
+    const fib = allFindings(result(rep, 'fib-3k'));
+    expect(fib.length).toBe(2);
+    for (const e of fib) expect(e).toMatchObject({ layer: 'geometrinen', domain: 'spiraali' });
+    expect(fib[0].trace).toMatch(/spiraalinaapuruus n ± F_k/);
+    const hood = expand(target, env).edges.filter((e) => e.group === GROUPS.fib);
+    expect(hood.length).toBeGreaterThan(0);
+    for (const e of hood) expect(e).toMatchObject({ layer: 'geometrinen', domain: 'spiraali' });
+    // Sama kohde n + F9 = n + 34 (MAX 629) molemmissa, sama tyyppi.
+    const same = hood.find((e) => nodeKey(e.to) === `hit:629@${T + 34}`);
+    expect(same).toBeDefined();
+    expect(same!.layer).toBe(fib[0].layer);
+    expect(same!.domain).toBe(fib[0].domain);
+    // Muut 369-perheet pysyvät matemaattisina.
+    for (const id of ['offset-369', 'skip-369', 'mod-9', 'digital-root'])
+      for (const e of allFindings(result(rep, id))) expect(e.layer).toBe('matemaattinen');
   });
 
   it('löydöt tarkistetaan lähdeaineistosta ja raportti on johdonmukainen', () => {
@@ -443,14 +474,19 @@ describe.skipIf(!HAS_FULL)('369 oikealla aineistolla: IDA 432 @858 511', () => {
     for (const e of allFindings(result(r, 'mod-9'))) expect(dr.has(JSON.stringify(e.to))).toBe(true);
   });
 
-  it('geo-369: 9 askelta, raportoidaan 3, 6 ja 9, ei vierailtuja kohtia uudelleen', () => {
+  it('geo-369: 9 askelta, raportoidaan 3, 6 ja 9 (ei löytöjä), ei vierailtuja kohtia uudelleen', () => {
     const r = run369(target, env, RAN_AT);
     const g = result(r, 'geo-369');
+    expect(g.nothingNew).toBe(true);
     for (const d of [g.primary!, g.opposite!]) {
       expect(d.domain).toBe('oktaedri');
       expect(d.checks.map((c) => c.label)).toEqual(Array.from({ length: 9 }, (_, i) => `askel ${i + 1}`));
-      expect(d.checks.filter((c) => c.match).map((c) => c.label)).toEqual(['askel 3', 'askel 6', 'askel 9']);
-      expect(d.findings.map((e) => e.metrics!.askel)).toEqual([3, 6, 9]);
+      expect(d.checks.filter((c) => c.match)).toEqual([]);
+      expect(d.checks.filter((c) => /^raportoitu askel/.test(c.detail ?? '')).map((c) => c.label)).toEqual(['askel 3', 'askel 6', 'askel 9']);
+      expect(d.matches).toBe(0);
+      expect(d.findings).toEqual([]);
+      expect(d.reported.map((e) => e.metrics!.askel)).toEqual([3, 6, 9]);
+      for (const e of d.reported) expect(e).toMatchObject({ layer: 'geometrinen', domain: 'oktaedri', op: '369:geo-369', verified: true });
       const ns = d.checks.map((c) => c.position);
       expect(new Set(ns).size).toBe(9);
       expect(ns).not.toContain(858511);
@@ -492,13 +528,38 @@ describe.skipIf(!HAS_FULL)('369 oikealla aineistolla: IDA 432 @858 511', () => {
         expect(result(r, id).primary!.checks).toEqual(result(code, id).primary!.checks);
         expect(result(r, id).notes[0]).toMatch(/T9-koodi on 42662/);
       }
-      const geo = allFindings(result(r, 'geo-369'));
+      const geo = allReported(result(r, 'geo-369'));
       expect(geo.length).toBeGreaterThan(0);
       for (const e of geo) expect(e.crossesRealm).toBe(true);
       expectConsistent(r);
     }
     expect(result(run369({ kind: 'person', personId: 'hanna-3' }, env, RAN_AT), 'mod-9').notes[0]).toMatch(/^Henkilö HANNA III: /);
-    for (const e of allFindings(result(code, 'geo-369'))) expect(e.crossesRealm).toBe(false);
+    for (const e of allReported(result(code, 'geo-369'))) expect(e.crossesRealm).toBe(false);
+  });
+
+  it('koodi 42662 ja HANNA III: kun vertailumenetelmät eivät löydä mitään, kokonaistulos on ”Ei uutta” (geo-369 ei estä)', () => {
+    for (const ref of [{ kind: 'code', code: '42662' }, { kind: 'person', personId: 'hanna-3' }] as NodeRef[]) {
+      const r = run369(ref, env, RAN_AT);
+      const comparisons = r.results.filter((m) => m.id !== 'geo-369');
+      expect(comparisons.map((m) => m.id)).toEqual(['offset-369', 'skip-369', 'mod-9', 'digital-root', 'fib-3k']);
+      for (const m of comparisons) {
+        expect(m.applicable).toBe(true);
+        expect([m.primary!.matches, m.opposite!.matches]).toEqual([0, 0]);
+        expect(m.nothingNew).toBe(true);
+      }
+      const geo = result(r, 'geo-369');
+      expect(geo.applicable).toBe(true);
+      expect(geo.nothingNew).toBe(true);
+      expect([geo.primary!.reported.length, geo.opposite!.reported.length]).toEqual([3, 3]);
+      expect(r.nothingNewOverall).toBe(true);
+      expect(r.summary).toBe(
+        'Ei uutta: mikään menetelmä ei löytänyt yhteyttä. Lisäksi geo-369: 6 raportoitua kävelyaskelta ' +
+          '(tuotetaan aina, eivät ole löytöjä; odotusta ei määritellä).',
+      );
+      expect(r.summary).not.toMatch(/löytöä/);
+      expectFindingsVerified(D, r);
+      expectConsistent(r);
+    }
   });
 
   it('koodi 432: yli tuhat osumaa, suoritus pysyy nopeana', () => {

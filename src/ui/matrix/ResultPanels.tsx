@@ -12,10 +12,14 @@ import { shortLabel } from './labels';
 
 const FINDINGS_SHOWN = 6;
 
-/** Löytöjen määrä yhteen suuntaan. Geometrinen kävely raportoi askeleita, ei satunnaisvertailtavia löytöjä. */
-function dirCount(id: string, n: number): string {
-  if (id === 'geo-369') return `${n} ${n === 1 ? 'askel' : 'askelta'}`;
+/** Löytöjen määrä yhteen suuntaan. */
+function dirCount(n: number): string {
   return `${n} ${n === 1 ? 'löytö' : 'löytöä'}`;
+}
+
+/** Geometrisen kävelyn raportoidut askeleet: tuotetaan aina, eivät ole löytöjä (ei kultaista korostusta). */
+function reportedCount(n: number): string {
+  return n ? `${n} raportoitu${n === 1 ? ' askel' : 'a askelta'}` : 'ei askeleita';
 }
 
 interface Common {
@@ -46,7 +50,7 @@ function Findings({ edges, env, visited, onTrail, onOpen }: Common & { edges: Ma
   );
 }
 
-function DirBlock({ d, primary, ...rest }: Common & { d: OpDirectionResult; primary: boolean }) {
+function DirBlock({ d, primary, walk, ...rest }: Common & { d: OpDirectionResult; primary: boolean; walk: boolean }) {
   return (
     <div className={`mx-dirblock${d.matches ? ' found' : ''}`}>
       <div className="mx-dirblock-head">
@@ -55,12 +59,31 @@ function DirBlock({ d, primary, ...rest }: Common & { d: OpDirectionResult; prim
           {d.domain ? ` · ${DOMAIN_LABELS[d.domain]}` : ''}
         </span>
         <span className="mx-small">
-          löytöjä <b>{d.matches}</b> · odotus {d.expected == null ? 'ei määritelty' : fmtExpectedFi(d.expected)}
+          {walk ? (
+            <>
+              raportoidut askeleet (aina tuotetaan) <b>{d.reported.length}</b>
+            </>
+          ) : (
+            <>
+              löytöjä <b>{d.matches}</b>
+            </>
+          )}{' '}
+          · odotus {d.expected == null ? 'ei määritelty' : fmtExpectedFi(d.expected)}
         </span>
       </div>
       {d.domain && <div className="mx-small faint">{DIRECTION_SEMANTICS[d.domain][d.direction]}</div>}
-      {d.matches === 0 && <div className="mx-nothing">Ei uutta tähän suuntaan.</div>}
+      {walk ? (
+        <div className="mx-nothing">Ei löytöjä: kävelyn askeleet tuotetaan aina, eivätkä ne ole satunnaisvertailu.</div>
+      ) : (
+        d.matches === 0 && <div className="mx-nothing">Ei uutta tähän suuntaan.</div>
+      )}
       <Findings edges={d.findings} {...rest} />
+      {d.reported.length > 0 && (
+        <div data-testid="matrix-369-reported">
+          <div className="mx-small faint">Raportoidut askeleet (aina tuotetaan, eivät ole löytöjä)</div>
+          <Findings edges={d.reported} {...rest} />
+        </div>
+      )}
       <div className="mx-small faint">{d.expectedNote}</div>
       <details className="mx-checks">
         <summary>Kaikki tarkistukset ({d.checks.length})</summary>
@@ -124,7 +147,8 @@ export function Ops369Panel({ report, ...rest }: Common & { report: Op369Report 
                   (d) =>
                     d && (
                       <span key={d.direction} className={`mx-chip mono${d.matches ? ' gold' : ''}`}>
-                        {d.direction}: {d.matches ? dirCount(r.id, d.matches) : 'Ei uutta'}
+                        {d.direction}:{' '}
+                        {r.id === 'geo-369' ? reportedCount(d.reported.length) : d.matches ? dirCount(d.matches) : 'Ei uutta'}
                       </span>
                     ),
                 )
@@ -133,8 +157,8 @@ export function Ops369Panel({ report, ...rest }: Common & { report: Op369Report 
           </summary>
           <div className="mx-small faint">{r.definition}</div>
           {!r.applicable && <div className="mx-nothing">{r.reasonNotApplicable}</div>}
-          {r.primary && <DirBlock d={r.primary} primary {...rest} />}
-          {r.opposite && <DirBlock d={r.opposite} primary={false} {...rest} />}
+          {r.primary && <DirBlock d={r.primary} primary walk={r.id === 'geo-369'} {...rest} />}
+          {r.opposite && <DirBlock d={r.opposite} primary={false} walk={r.id === 'geo-369'} {...rest} />}
           {r.notes.length > 0 && (
             <ul className="mx-notes">
               {r.notes.map((n, i) => (

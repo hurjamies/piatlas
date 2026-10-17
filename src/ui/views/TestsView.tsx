@@ -500,7 +500,7 @@ function TestLog() {
 
 /** Matriisin reittitestit ovat oma testiperheensä; ne näytetään erillisellä rivillä (eivät muuta yllä olevaa määrää). */
 function MatrixRunsLine() {
-  const m = useApp((s) => s.matrix.routeRuns.length);
+  const m = useApp((s) => Math.max(s.matrix.runIndex.total, s.matrix.routeRuns.length));
   if (!m) return null;
   return (
     <div className="row" style={{ gap: 8 }} data-testid="tests-matrix-runs">

@@ -6,7 +6,7 @@ import { createSeedStory } from '../src/core/matrix/seed';
 import { removeGloss, upsertPerson } from '../src/core/matrix/story';
 import { crossings, firstTestRoute, isOnTrail, openEdge, rootTrail, trailKeys, truncateTo } from '../src/core/matrix/trail';
 import type { Direction, Expansion, MatrixEdge, MatrixEnv, MatrixEvent, NodeRef, TrailStep } from '../src/core/matrix/types';
-import { DIRECTION_SEMANTICS, directionLabel, MAX_DEPTH, nodeKey, realmOf } from '../src/core/matrix/types';
+import { DIRECTION_SEMANTICS, directionLabel, HYPOTHESIS_LABELS, MAX_DEPTH, nodeKey, realmOf } from '../src/core/matrix/types';
 import { FIXTURE_DIGITS, full, HAS_FULL } from './helpers';
 
 const EVENTS: MatrixEvent[] = [
@@ -119,6 +119,51 @@ describe('juurisolmu', () => {
     expect(t.length).toBe(1);
     expect(t[0].to).toEqual({ kind: 'code', code: '629' });
     expect(t[0].relation).toBe('Ensimmäinen testireitti: MAX (629) → 2 → HANNA → HANNA III');
+  });
+
+  it('tarinan yleistulkinnat (23, 43, …) ja kaikki tapahtumat ovat avattavissa juuresta', () => {
+    const x = expand({ kind: 'root' }, fixtureEnv('234', EVENTS));
+    const gl = byGroup(x, GROUPS.storyGlosses);
+    expect(keysOf(gl)).toEqual(['gloss:g-23', 'gloss:g-43', 'gloss:g-2-tarina', 'gloss:g-3-tarina', 'gloss:g-4-tarina']);
+    for (const e of gl) expect(e).toMatchObject({ layer: 'symbolinen', crossesRealm: true, direction: null, verified: null });
+    expect(gl[0].relation).toBe('tarinan yleistulkinta: 23 = hälytys, vaikeudet, tuntematon, ahdistus');
+    // Tapahtumat aikajärjestyksessä suunnassa, päiväämätön viimeisenä ilman suuntaa.
+    const ev = byGroup(x, GROUPS.events);
+    expect(ev.map((e) => [nodeKey(e.to), e.layer, e.direction])).toEqual([
+      ['event:e-a', 'ajallinen', '234'],
+      ['event:e-b', 'ajallinen', '234'],
+      ['event:e-c', 'symbolinen', null],
+    ]);
+    for (const e of ev.slice(0, 2)) expect(e.domain).toBe('aika');
+    const ev432 = byGroup(expand({ kind: 'root' }, fixtureEnv('432', EVENTS)), GROUPS.events);
+    expect(keysOf(ev432)).toEqual(['event:e-b', 'event:e-a', 'event:e-c']);
+    for (const e of x.edges) checkEdge(x.node.ref, e, FIXTURE_DIGITS);
+    // Ilman tapahtumia ryhmää ei ole.
+    expect(byGroup(expand({ kind: 'root' }, fixtureEnv()), GROUPS.events)).toEqual([]);
+  });
+
+  it('saavutettavuus: leveyshaku juuresta löytää tulkinnat 23 ja 43, koodit 23 ja 43 sekä henkilöttömän tapahtuman', () => {
+    const lone: MatrixEvent = { id: 'e-yksin', title: 'Henkilötön', date: '2010-01-01', note: '', linkedHits: [], personIds: [] };
+    const env = fixtureEnv('234', [...EVENTS, lone]);
+    const depth = new Map<string, number>([['root', 0]]);
+    let frontier: NodeRef[] = [{ kind: 'root' }];
+    for (let d = 1; d <= 2; d++) {
+      const next: NodeRef[] = [];
+      for (const r of frontier)
+        for (const e of expand(r, env, { hitLimit: 0 }).edges) {
+          const k = nodeKey(e.to);
+          if (!depth.has(k)) {
+            depth.set(k, d);
+            next.push(e.to);
+          }
+        }
+      frontier = next;
+    }
+    expect(depth.get('gloss:g-23')).toBe(1);
+    expect(depth.get('gloss:g-43')).toBe(1);
+    expect(depth.get('event:e-yksin')).toBe(1);
+    expect(depth.get('code:23')).toBe(2);
+    expect(depth.get('code:43')).toBe(2);
   });
 
   it('ankkuri, jota ei löydy aineistosta: huomautus eikä osumasärmää', () => {
@@ -321,7 +366,9 @@ describe('tarinasolmut', () => {
     const m = byGroup(p432, GROUPS.symbolMatch);
     expect(m.length).toBe(1);
     expect(m[0]).toMatchObject({ to: { kind: 'code', code: '432' }, layer: 'symbolinen', relation: text, crossesRealm: true });
-    expect(p432.node.facts.find((f) => f.label === 'Hypoteesin ajoitus')!.value).toMatch(/^Ajoitus ei tiedossa/);
+    // Ajoitus seuraa siemenen polun hypoteesia (ks. seed.ts), eikä sitä kovakoodata tähän.
+    const timing = createSeedStory().paths.find((p) => p.id === 'polku-b')!.hypothesis.timing;
+    expect(p432.node.facts.find((f) => f.label === 'Hypoteesin ajoitus')!.value.startsWith(HYPOTHESIS_LABELS[timing])).toBe(true);
     const p234 = expand({ kind: 'path', pathId: 'polku-b' }, fixtureEnv('234'));
     expect(byGroup(p234, GROUPS.symbolMatch)).toEqual([]);
     expect(keysOf(byGroup(p234, GROUPS.steps('234')))).toEqual(['person:hanna-3', 'person:salla', 'person:ida']);
@@ -383,6 +430,47 @@ describe('tarinasolmut', () => {
     expect(keysOf(b.edges)).toContain('path:polku-b');
   });
 
+  it('moninumeroinen tulkinta 23 → koodisolmu 23 (matemaattinen) ja koodista takaisin tulkintaan', () => {
+    const x = expand({ kind: 'gloss', glossId: 'g-23' }, fixtureEnv());
+    const code = byGroup(x, GROUPS.code);
+    expect(keysOf(code)).toEqual(['code:23']);
+    expect(code[0]).toMatchObject({ layer: 'matemaattinen', crossesRealm: true, verified: null });
+    expect(code[0].trace).toMatch(/merkkijonon samuus/);
+    for (const e of x.edges) checkEdge(x.node.ref, e, FIXTURE_DIGITS);
+    const c23 = expand({ kind: 'code', code: '23' }, fixtureEnv());
+    expect(keysOf(byGroup(c23, GROUPS.glosses))).toEqual(['gloss:g-23']);
+    const hits = codeHits(FIXTURE_DIGITS, '23');
+    expect(hits.length).toBeGreaterThan(0);
+    expect(byGroup(c23, GROUPS.allHits(hits.length)).length).toBe(hits.length);
+    // Yksinumeroinen symboli ei saa koodisärmää (avautuu numeroporttien kautta).
+    expect(byGroup(expand({ kind: 'gloss', glossId: 'g-2-tarina' }, fixtureEnv()), GROUPS.code)).toEqual([]);
+  });
+
+  it('järjestysnumerot ristiriidassa ajanjaksojen kanssa: varoitus samannimisissä ja henkilössä, ei uudelleennumerointia', () => {
+    let story = createSeedStory();
+    for (const [id, start] of [
+      ['hanna-1', '2015-01-01'],
+      ['hanna-2', '2010-01-01'],
+      ['hanna-3', '2001-01-01'],
+    ] as const)
+      story = upsertPerson(story, { ...story.persons.find((p) => p.id === id)!, period: { start, end: null } });
+    const env = { ...fixtureEnv('234'), story };
+    const h = expand({ kind: 'homonyms', name: 'HANNA' }, env);
+    const fact = h.node.facts.find((f) => f.label === 'Ristiriita');
+    expect(fact?.value).toMatch(/^Nimi HANNA: järjestysnumerot \(HANNA I → HANNA II → HANNA III\) ovat eri järjestyksessä/);
+    expect(h.notes).toContain(fact!.value);
+    // Kronologia näytetään päivämäärien mukaan, numerot säilyvät.
+    expect(keysOf(byGroup(h, GROUPS.homonymPersons))).toEqual(['person:hanna-3', 'person:hanna-2', 'person:hanna-1']);
+    const p = expand({ kind: 'person', personId: 'hanna-3' }, env);
+    expect(p.node.title).toBe('HANNA III');
+    expect(p.node.subtitle).toBe('henkilö · samannimisistä kolmas (järjestysnumero ristiriidassa ajanjaksojen kanssa)');
+    expect(p.node.facts.find((f) => f.label === 'Järjestysnumero')!.value).toMatch(/ristiriidassa ajanjaksojen alkupäivien kanssa/);
+    expect(p.notes).toContain(fact!.value);
+    // Ilman ristiriitaa ennallaan.
+    const ok = expand({ kind: 'homonyms', name: 'HANNA' }, fixtureEnv());
+    expect(ok.node.facts.some((f) => f.label === 'Ristiriita')).toBe(false);
+  });
+
   it('tapahtumat: henkilön aikajana suunnassa, linkit indekseinä, edellinen/seuraava', () => {
     const p234 = expand({ kind: 'person', personId: 'hanna-3' }, fixtureEnv('234', EVENTS));
     expect(keysOf(byGroup(p234, GROUPS.events))).toEqual(['event:e-a', 'event:e-b', 'event:e-c']);
@@ -393,8 +481,13 @@ describe('tarinasolmut', () => {
     expect(keysOf(byGroup(ea, GROUPS.persons))).toEqual(['person:hanna-3']);
     const linked = byGroup(ea, GROUPS.linkedHits);
     expect(keysOf(linked)).toEqual(['pos:273']);
-    expect(linked[0]).toMatchObject({ layer: 'matemaattinen', crossesRealm: true });
-    expect(linked[0].trace).toContain('käyttäjän linkki');
+    // Käyttäjän tekemä linkki: symbolinen, ei tarkistettu osuma (termin koodia ei tunneta).
+    expect(linked[0]).toMatchObject({ layer: 'symbolinen', verified: null, crossesRealm: true });
+    expect(linked[0].relation).toBe('käyttäjän linkittämä kohta ida @273');
+    expect(linked[0].relation).not.toMatch(/osuma/);
+    expect(linked[0].trace).toMatch(/^Käyttäjän linkki "ida@273" \(hakutermi "ida"\): linkin on tehnyt käyttäjä/);
+    expect(linked[0].trace).toMatch(/osumaa ei tarkisteta/);
+    expect(ea.edges.some((e) => e.to.kind === 'hit' || e.verified === true)).toBe(false);
     expect(ea.notes.join(' ')).toMatch(/"x@99999999"/);
     expect(byGroup(ea, GROUPS.eventOrder).map((e) => [nodeKey(e.to), e.direction])).toEqual([['event:e-b', '234']]);
     const eb = expand({ kind: 'event', eventId: 'e-b' }, fixtureEnv('432', EVENTS));

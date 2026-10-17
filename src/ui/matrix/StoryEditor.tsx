@@ -3,10 +3,11 @@
 // Kaikki tämä on käyttäjän symbolista tietoa, ja se tallentuu vain tälle laitteelle.
 import { useMemo, useRef, useState } from 'react';
 import { t9Code } from '../../core/matrix/refs';
-import { comparePersons, glossContextLabel, personLabel, personsByName, validateStory } from '../../core/matrix/story';
-import type { Gloss, GlossContext, PathStep, Person, Relation, StoryModel, StoryPath } from '../../core/matrix/types';
-import { HYPOTHESIS_LABELS, normName } from '../../core/matrix/types';
-import { sanitizeStory } from '../../state/matrix';
+import { comparePersons, glossContextLabel, personLabel, personsByName, validateStory, validateStoryWarnings } from '../../core/matrix/story';
+import { createSeedStory } from '../../core/matrix/seed';
+import type { Gloss, GlossContext, NodeRef, PathStep, Person, Relation, StoryModel, StoryPath } from '../../core/matrix/types';
+import { HYPOTHESIS_LABELS, nodeKey, normName } from '../../core/matrix/types';
+import { editedPathMeta, sanitizeStory } from '../../state/matrix';
 import {
   deleteGloss,
   deletePath,
@@ -14,12 +15,14 @@ import {
   deleteRelation,
   importStory,
   newId,
+  openSelectedNode,
   resetStoryToSeed,
   saveGloss,
   savePath,
   savePerson,
   saveRelation,
 } from '../../state/matrix-actions';
+import { danglingEventPersons, personLinkLabel } from '../../state/matrix-select';
 import { useApp } from '../../state/store';
 import { copyText, downloadText, IS_ARTIFACT } from './bits';
 
@@ -33,6 +36,7 @@ const splitList = (s: string) =>
 export function StoryEditor() {
   const story = useApp((s) => s.matrix.story);
   const errors = useMemo(() => validateStory(story), [story]);
+  const warnings = useMemo(() => validateStoryWarnings(story), [story]);
   return (
     <div className="section mx-story" data-testid="matrix-story-editor">
       <div className="eyebrow rose">Tarinaverkko · käyttäjän symbolinen tieto</div>
@@ -49,7 +53,19 @@ export function StoryEditor() {
           </ul>
         </div>
       ) : (
-        <div className="mx-small mx-ok-line">Tarinamalli on eheä ✓ (validateStory)</div>
+        <div className="mx-small mx-ok-line">
+          {warnings.length ? 'Tarinamallin rakenne on eheä (validateStory), mutta siinä on varoituksia.' : 'Tarinamalli on eheä ✓ (validateStory)'}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div className="note warn" data-testid="matrix-story-warnings">
+          <b>Tarinan varoitukset: {warnings.length}</b>
+          <ul className="mx-errlist">
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
       )}
       <PersonsSection story={story} />
       <RelationsSection story={story} />
@@ -62,9 +78,33 @@ export function StoryEditor() {
 
 // ------------------------------------------------------------------ yhteiset
 
-function RowButtons({ onEdit, onDelete, confirming, setConfirming }: { onEdit: () => void; onDelete: () => void; confirming: boolean; setConfirming: (b: boolean) => void }) {
+function RowButtons({
+  onEdit,
+  onDelete,
+  confirming,
+  setConfirming,
+  open,
+}: {
+  onEdit: () => void;
+  onDelete: () => void;
+  confirming: boolean;
+  setConfirming: (b: boolean) => void;
+  /** Solmu matriisissa: lisätään murupolun loppuun askeleena "valittu käyttäjän toimesta" (ei laskettu yhteys). */
+  open?: NodeRef;
+}) {
   return (
     <div className="mx-btn-row">
+      {open && (
+        <button
+          type="button"
+          className="mx-btn"
+          data-testid="matrix-story-open"
+          data-key={nodeKey(open)}
+          onClick={() => openSelectedNode(open, 'Tarina-sivu')}
+        >
+          Avaa matriisissa
+        </button>
+      )}
       <button type="button" className="mx-btn" onClick={onEdit}>
         Muokkaa
       </button>
@@ -147,6 +187,7 @@ function PersonsSection({ story }: { story: StoryModel }) {
               ajanjakso: {p.period && (p.period.start || p.period.end) ? `${p.period.start ?? '?'} – ${p.period.end ?? ''}` : 'ei tiedossa'} · lähde: {p.source}
             </div>
             <RowButtons
+              open={{ kind: 'person', personId: p.id }}
               onEdit={() => {
                 setErr(null);
                 setEditing(p.id);
@@ -348,6 +389,7 @@ function GlossesSection({ story }: { story: StoryModel }) {
               {g.id} · lähde: {g.source}
             </div>
             <RowButtons
+              open={{ kind: 'gloss', glossId: g.id }}
               onEdit={() => setEditing(g.id)}
               confirming={confirm === g.id}
               setConfirming={(b) => setConfirm(b ? g.id : null)}
@@ -503,6 +545,7 @@ function PathsSection({ story }: { story: StoryModel }) {
               {HYPOTHESIS_LABELS[p.hypothesis.timing]} · lähde: {p.source} · <span className="mono">{p.id}</span>
             </div>
             <RowButtons
+              open={{ kind: 'path', pathId: p.id }}
               onEdit={() => {
                 setErr(null);
                 setEditing(p.id);
@@ -548,19 +591,15 @@ function PathForm({ story, initial, onDone }: { story: StoryModel; initial: Stor
       onSubmit={(e) => {
         e.preventDefault();
         if (!ok) return;
+        const nextSteps = steps.map((s) => ({ ...s, name: normName(s.name), symbol: s.symbol.trim(), stage: s.stage.trim() }));
         savePath({
           id: initial?.id ?? newId('polku'),
           title: title.trim(),
           theme: theme.trim(),
-          steps: steps.map((s) => ({ ...s, name: normName(s.name), symbol: s.symbol.trim(), stage: s.stage.trim() })),
+          steps: nextSteps,
           note: note.trim(),
-          source: initial?.source ?? 'käyttäjä',
-          hypothesis: initial?.hypothesis ?? {
-            timing: 'ei-tiedossa',
-            statedAt: nowIso(),
-            lockHash: null,
-            note: 'Käyttäjän lisäämä polku; ajoitusta suhteessa π-löytöihin ei ole lukittu.',
-          },
+          // Askelten muokkaus: lähde 'käyttäjä' ja ajoitus 'löydön-jälkeen' ("muokattu"); muuten ennallaan.
+          ...editedPathMeta(initial, nextSteps, nowIso()),
           createdAt: initial?.createdAt ?? nowIso(),
         });
         onDone();
@@ -640,6 +679,12 @@ function StoryTools({ story }: { story: StoryModel }) {
   const [importErr, setImportErr] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Tuodun polun ”ennen löydöstä” hyväksytään vain tämän laitteen lukitusta vasten (muuten 'ei-tiedossa' + varoitus).
+  const locks = useApp((s) => s.matrix.locks);
+  // Tapahtumat, joiden henkilölinkit jäisivät osoittamaan olemattomiin henkilöihin: listataan vahvistuksessa.
+  const events = useApp((s) => s.events);
+  const pendingDangling = useMemo(() => (pending ? danglingEventPersons(events, pending.story) : []), [pending, events]);
+  const resetDangling = useMemo(() => (confirmReset ? danglingEventPersons(events, createSeedStory()) : []), [confirmReset, events]);
   const json = () => JSON.stringify(story, null, 2);
   const check = (text: string, source: string) => {
     setPending(null);
@@ -651,7 +696,7 @@ function StoryTools({ story }: { story: StoryModel }) {
       setImportErr(`JSON ei kelpaa: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    const r = sanitizeStory(raw);
+    const r = sanitizeStory(raw, locks);
     if (!r.story) {
       setImportErr(`Tiedosto ei ole tarinamalli: ${r.dropped.join(' ')}`);
       return;
@@ -726,6 +771,7 @@ function StoryTools({ story }: { story: StoryModel }) {
               </ul>
             </div>
           )}
+          <DanglingNote list={pendingDangling} story={story} />
           <div className="mx-small">Tuonti korvaa nykyisen tarinan tällä laitteella. Vie nykyinen tarina ensin, jos haluat säilyttää sen.</div>
           <div className="mx-btn-row">
             <button
@@ -733,7 +779,7 @@ function StoryTools({ story }: { story: StoryModel }) {
               className="mx-btn danger"
               data-testid="matrix-story-import-confirm"
               onClick={() => {
-                importStory(pending.story, pending.source);
+                importStory(pending.story, pending.source, pending.dropped);
                 setPending(null);
                 setImportText('');
               }}
@@ -749,6 +795,7 @@ function StoryTools({ story }: { story: StoryModel }) {
 
       <div className="eyebrow">Testitapauksen siemendata</div>
       <div className="mx-small faint">Muokattua tarinaa ei koskaan korvata siemenellä automaattisesti. Palautus korvaa nykyisen tarinan.</div>
+      {confirmReset && <DanglingNote list={resetDangling} story={story} />}
       {confirmReset ? (
         <div className="mx-btn-row">
           <span className="mx-small">Korvataanko nykyinen tarina siemendatalla?</span>
@@ -773,5 +820,23 @@ function StoryTools({ story }: { story: StoryModel }) {
         </button>
       )}
     </details>
+  );
+}
+
+/** Vahvistuksen lista: tapahtumat, joiden henkilölinkit poistetaan, koska henkilöitä ei ole uudessa tarinassa. */
+function DanglingNote({ list, story }: { list: { eventId: string; title: string; personIds: string[] }[]; story: StoryModel }) {
+  if (!list.length) return null;
+  return (
+    <div className="note warn" data-testid="matrix-story-dangling">
+      Tapahtumien henkilölinkit ({list.length} {list.length === 1 ? 'tapahtuma' : 'tapahtumaa'}) viittaavat henkilöihin, joita uudessa
+      tarinassa ei ole. Vahvistus poistaa nämä linkit tapahtumista, ja poisto kirjataan muutoshistoriaan:
+      <ul className="mx-errlist">
+        {list.map((d) => (
+          <li key={d.eventId}>
+            ”{d.title}”: {d.personIds.map((id) => personLinkLabel(story, id)).join(', ')}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

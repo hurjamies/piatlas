@@ -1,28 +1,44 @@
 // Reitit-sivu: tallennetut reitit (π-faktat tarkistettuina) ja reittitesti satunnaisvertailulla
-// (PIATLAS-ROUTE-1.0.0). Hypoteesin voi lukita SHA-256-tiivisteellä ennen ajoa; ajoitussääntö on sama kuin
-// Testit-välilehden esirekisteröinnissä.
+// (PIATLAS-ROUTE-1.0.0). Hypoteesin voi lukita SHA-256-tiivisteellä ennen ajoa (tämän laitteen kirjaus).
+// Lukitus kattaa vain kysymyksen ensimmäisen ajon; kysymys on kanoninen (src/state/matrix.ts: routeQuestionKey).
+// Ajon tila on storessa, joten eteneminen ja keskeytys näkyvät, vaikka sivulta poistutaan välillä.
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { codeHits, expectedHits } from '../../core/matrix/hits';
-import { ROUTE_ORDER_LABELS, RouteOrder, RouteTestResult } from '../../core/matrix/route-test';
-import { HYPOTHESIS_LABELS, ROUTE_TEST_VERSION, realmOf } from '../../core/matrix/types';
+import { ROUTE_ORDER_LABELS, RouteOrder } from '../../core/matrix/route-test';
+import { HYPOTHESIS_LABELS, LAYER_LABELS, REALM_LABELS, ROUTE_TEST_VERSION, realmOf } from '../../core/matrix/types';
 import { seedFrom } from '../../core/random';
-import { benjaminiHochberg, classify } from '../../core/stats';
 import { cancelEngine } from '../../state/actions';
 import {
+  classifyRouteRun,
   evaluateRouteTiming,
   firstRouteCodes,
+  lockForQuestion,
   NamedCode,
   namedCode,
+  routeBH,
   routeCodesFromPath,
   routeCodesFromTrail,
-  routeQuestionKey,
   RouteRunSummary,
+  taskDerivedReason,
 } from '../../state/matrix';
-import { deleteRoute, lockRouteHypothesis, openHitInMatrix, openRoute, runRouteTest } from '../../state/matrix-actions';
+import {
+  deleteRoute,
+  lockRouteHypothesis,
+  openHitInMatrix,
+  openRoute,
+  runRouteTest,
+  selectRouteRun,
+  setRouteForm,
+  setRouteTestError,
+} from '../../state/matrix-actions';
 import { useApp } from '../../state/store';
 import { Histogram } from '../components/Histogram';
 import { fiNum, fmtDateTime, fmtExpected, fmtN, fmtPct, fmtPfi } from '../format';
+import { LayerBadge } from './bits';
 import { shortLabel } from './labels';
+
+/** Lukitus on tämän laitteen oma kirjaus: tiivistettä ja aikaleimaa ei todenneta ulkopuolisesti. */
+const ON_DEVICE = 'lukittu tällä laitteella';
 
 const VERDICT_CLASS: Record<string, string> = { 'ei-poikkeamaa': 'coded', eksploratiivinen: 'exp', 'lukittu-alle-alfa': 'stat' };
 const fmtSpan = (x: number | null) => (x == null ? '∞ (mahdoton)' : `${fmtN(x)} des.`);
@@ -56,7 +72,11 @@ function SavedRoutes() {
           <div className="mx-chips">
             <span className="mx-chip dir">suunta {r.direction}</span>
             <span className={`mx-chip ${r.hypothesis.timing === 'ennen-löydöstä' ? 'ok' : ''}`}>{HYPOTHESIS_LABELS[r.hypothesis.timing]}</span>
-            {r.hypothesis.lockHash && <span className="mx-chip mono">SHA-256 {r.hypothesis.lockHash.slice(0, 10)}…</span>}
+            {r.hypothesis.lockHash && (
+              <span className="mx-chip mono" title="Lukitus on tämän laitteen oma kirjaus; tiivistettä ei todenneta ulkopuolisesti.">
+                SHA-256 {r.hypothesis.lockHash.slice(0, 10)}… · {ON_DEVICE}
+              </span>
+            )}
             <span className="mx-chip">{r.crossings.length} kerrosvaihtoa</span>
             <span className="mx-chip mono">{r.matrixVersion}</span>
           </div>
@@ -64,10 +84,21 @@ function SavedRoutes() {
             {r.trail.map((st, i) => {
               const realm = realmOf(st.ref);
               const crossing = r.crossings.includes(i);
+              // Jokaisen askeleen kerros (π-data / Tarinaverkko) ja yhteyden tyyppi, kuten elävässä murupolussa.
+              const layer = st.via ? st.via.layer : 'matemaattinen';
               return (
                 <Fragment key={i}>
                   {i > 0 && <span className={crossing ? 'mx-mini-div' : 'mx-sep'}>{crossing ? (realm === 'tarina' ? 'π | tarina' : 'tarina | π') : '›'}</span>}
-                  <span className={`mx-mini-crumb r-${realm}`}>{shortLabel(st.ref, story, events)}</span>
+                  <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+                    <span className={`mx-mini-crumb r-${realm}`}>{shortLabel(st.ref, story, events)}</span>
+                    <span
+                      className={`mx-layer l-${layer}`}
+                      data-testid="matrix-saved-step-layer"
+                      title={st.via ? `${LAYER_LABELS[st.via.layer]}: ${st.via.relation}` : 'Lähtöankkuri'}
+                    >
+                      {REALM_LABELS[realm]} · {st.via ? LAYER_LABELS[st.via.layer] : 'lähtö'}
+                    </span>
+                  </span>
                 </Fragment>
               );
             })}
@@ -78,7 +109,10 @@ function SavedRoutes() {
             </div>
           )}
           {r.hypothesis.note && <div className="mx-small faint">{r.hypothesis.note}</div>}
-          <div className="eyebrow">π-faktat tallennushetkellä</div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <span className="eyebrow">π-faktat tallennushetkellä</span>
+            <LayerBadge layer="matemaattinen" />
+          </div>
           <ul className="mx-factlist">
             {r.mathFacts.map((f) => (
               <li key={f} className={f.includes('✗') ? 'bad' : ''}>
@@ -118,6 +152,8 @@ interface Source {
   id: string;
   label: string;
   codes: NamedCode[];
+  /** Tehtävänannon lähteen nimi (ensimmäinen testireitti tai tehtävänannon polku): ajoitus on aina 'löydön-jälkeen'. */
+  task: string | null;
 }
 
 function RouteTest() {
@@ -125,37 +161,39 @@ function RouteTest() {
   const saved = useApp((s) => s.matrix.saved);
   const trail = useApp((s) => s.matrix.trail);
   const runs = useApp((s) => s.matrix.routeRuns);
+  const runIndex = useApp((s) => s.matrix.runIndex);
   const locks = useApp((s) => s.matrix.locks);
+  const rt = useApp((s) => s.matrix.routeTest);
   const digits = useApp((s) => s.digits);
   const sha = useApp((s) => s.dataset.info?.sha256 ?? null);
   const engineMode = useApp((s) => s.engineMode);
+  // Lomake ja ajon tila ovat storessa (säilyvät, kun sivulta poistutaan); vain lisäyskenttä on paikallinen.
+  const { sourceId, excluded, extra, order, R, seedText, strings, hyp } = rt.form;
+  const running = rt.running;
+  const [extraText, setExtraText] = useState('');
 
   const sources: Source[] = useMemo(
     () => [
-      { id: 'first', label: 'Ensimmäinen testireitti: MAX → HANNA → SALLA → IDA', codes: firstRouteCodes() },
-      ...story.paths.map((p) => ({
-        id: `path:${p.id}`,
-        label: `${p.title} · ${p.theme || '–'}: ${p.steps.map((s) => s.name).join(' → ')}`,
-        codes: routeCodesFromPath(p),
-      })),
-      { id: 'trail', label: 'Nykyinen murupolku', codes: routeCodesFromTrail(trail, story) },
-      ...saved.map((r) => ({ id: `saved:${r.id}`, label: `Tallennettu: ${r.title}`, codes: routeCodesFromTrail(r.trail, story) })),
+      {
+        id: 'first',
+        label: 'Ensimmäinen testireitti: MAX → HANNA → SALLA → IDA',
+        codes: firstRouteCodes(),
+        task: 'ensimmäinen testireitti MAX → HANNA → SALLA → IDA',
+      },
+      ...story.paths.map((p) => {
+        const names = p.steps.map((s) => s.name).join(' → ');
+        return {
+          id: `path:${p.id}`,
+          label: `${p.title} · ${p.theme || '–'}: ${names}`,
+          codes: routeCodesFromPath(p),
+          task: p.source === 'tehtävänanto' ? `${p.title}: ${names}` : null,
+        };
+      }),
+      { id: 'trail', label: 'Nykyinen murupolku', codes: routeCodesFromTrail(trail, story), task: null },
+      ...saved.map((r) => ({ id: `saved:${r.id}`, label: `Tallennettu: ${r.title}`, codes: routeCodesFromTrail(r.trail, story), task: null })),
     ],
     [story, saved, trail],
   );
-  const [sourceId, setSourceId] = useState('first');
-  const [excluded, setExcluded] = useState<string[]>([]);
-  const [extra, setExtra] = useState<NamedCode[]>([]);
-  const [extraText, setExtraText] = useState('');
-  const [order, setOrder] = useState<RouteOrder>('mikä-tahansa');
-  const [R, setR] = useState(1000);
-  const [seedText, setSeedText] = useState('20261016');
-  const [strings, setStrings] = useState(0);
-  const [hyp, setHyp] = useState('');
-  const [running, setRunning] = useState<null | { done: number; total: number }>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [last, setLast] = useState<{ id: string; result: RouteTestResult } | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
 
   const source = sources.find((s) => s.id === sourceId) ?? sources[0];
   const all = [...source.codes, ...extra.filter((c) => !source.codes.some((x) => x.code === c.code))];
@@ -166,29 +204,18 @@ function RouteTest() {
     [codesKey, digits],
   );
   const cs = codes.map((c) => c.code);
-  const key = routeQuestionKey(cs, order, sha);
-  const lock = [...locks].reverse().find((l) => routeQuestionKey(l.codes, l.order, l.datasetSha) === key) ?? null;
-  const preview = evaluateRouteTiming(lock, runs, cs, order, sha);
+  // Lukitus haetaan kanonisella kysymysavaimella; saman kysymyksen ensimmäinen lukitus ratkaisee.
+  const lock = lockForQuestion(locks, cs, order, sha);
+  const preview = evaluateRouteTiming(lock, runIndex, cs, order, sha, taskDerivedReason(cs, story, source.task));
   const defaultHyp = `Reitin ${codes.map((c) => c.name).join(' → ')} lyhin ikkuna (järjestys ${order}) on lyhyempi kuin 95 % nollamalleista (α = 0,05).`;
   const canRun = codes.length >= 2 && codes.every((c) => (counts.get(c.code) ?? 0) > 0) && !running;
 
-  const run = async () => {
-    setError(null);
-    setRunning({ done: 0, total: R + strings });
-    try {
-      const { result, summary } = await runRouteTest({ codes, order, R, seedText, randomStrings: strings, lockId: lock?.id ?? null }, (done, total) =>
-        setRunning({ done, total }),
-      );
-      setLast({ id: summary.id, result });
-      setSelected(summary.id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRunning(null);
-    }
+  const run = () => {
+    if (!canRun) return;
+    void runRouteTest({ codes, order, R, seedText, randomStrings: strings, taskSource: source.task });
   };
 
-  const shownRun = runs.find((r) => r.id === selected) ?? null;
+  const shownRun = runs.find((r) => r.id === rt.selected) ?? null;
 
   return (
     <section className="section" aria-label="Reittitesti">
@@ -205,10 +232,7 @@ function RouteTest() {
             className="input"
             id="mx-route-source"
             value={source.id}
-            onChange={(e) => {
-              setSourceId(e.target.value);
-              setExcluded([]);
-            }}
+            onChange={(e) => setRouteForm({ sourceId: e.target.value, excluded: [] })}
           >
             {sources.map((s) => (
               <option key={s.id} value={s.id}>
@@ -227,7 +251,7 @@ function RouteTest() {
                 type="button"
                 className="toggle mx-code-chip"
                 aria-pressed={on}
-                onClick={() => setExcluded(on ? [...excluded, c.code] : excluded.filter((x) => x !== c.code))}
+                onClick={() => setRouteForm({ excluded: on ? [...excluded, c.code] : excluded.filter((x) => x !== c.code) })}
               >
                 <span className="dot" />
                 {on ? `${codes.indexOf(c) + 1}. ` : ''}
@@ -247,11 +271,11 @@ function RouteTest() {
             e.preventDefault();
             const c = namedCode(extraText);
             if (!c) {
-              setError(`"${extraText}" ei ole koodattavissa (T9 tai numerojono).`);
+              setRouteTestError(`"${extraText}" ei ole koodattavissa (T9 tai numerojono).`);
               return;
             }
-            setError(null);
-            setExtra([...extra.filter((x) => x.code !== c.code), c]);
+            setRouteTestError(null);
+            setRouteForm({ extra: [...extra.filter((x) => x.code !== c.code), c] });
             setExtraText('');
           }}
         >
@@ -271,7 +295,7 @@ function RouteTest() {
         <div className="mx-form-grid">
           <label className="field">
             <span>JÄRJESTYS</span>
-            <select className="input" id="mx-route-order" value={order} onChange={(e) => setOrder(e.target.value as RouteOrder)}>
+            <select className="input" id="mx-route-order" value={order} onChange={(e) => setRouteForm({ order: e.target.value as RouteOrder })}>
               <option value="mikä-tahansa">mikä tahansa</option>
               <option value="234">234 (kasvava n)</option>
               <option value="432">432 (pienenevä n)</option>
@@ -279,7 +303,7 @@ function RouteTest() {
           </label>
           <label className="field">
             <span>TOISTOT R</span>
-            <select className="input" id="mx-route-r" value={R} onChange={(e) => setR(Number(e.target.value))}>
+            <select className="input" id="mx-route-r" value={R} onChange={(e) => setRouteForm({ R: Number(e.target.value) })}>
               {[200, 1000, 5000].map((r) => (
                 <option key={r} value={r}>
                   {fmtN(r)}
@@ -289,11 +313,11 @@ function RouteTest() {
           </label>
           <label className="field">
             <span>SIEMEN</span>
-            <input className="input mono" id="mx-route-seed" value={seedText} onChange={(e) => setSeedText(e.target.value)} />
+            <input className="input mono" id="mx-route-seed" value={seedText} onChange={(e) => setRouteForm({ seedText: e.target.value })} />
           </label>
           <label className="field">
             <span>SATUNNAISJONOT</span>
-            <select className="input" id="mx-route-strings" value={strings} onChange={(e) => setStrings(Number(e.target.value))}>
+            <select className="input" id="mx-route-strings" value={strings} onChange={(e) => setRouteForm({ strings: Number(e.target.value) })}>
               {[0, 10, 20].map((x) => (
                 <option key={x} value={x}>
                   {x} jonoa
@@ -310,18 +334,21 @@ function RouteTest() {
         <div className="mx-lock">
           <div className="eyebrow">Hypoteesin lukitus ennen ajoa (valinnainen)</div>
           <div className="mx-small faint">
-            Lukitus tallentaa hypoteesin, koodit, järjestyksen ja aikaleiman SHA-256-tiivisteenä. Vain ennen saman
-            reittikysymyksen ensimmäistä ajoa lukittu hypoteesi saa ajoituksen ”{HYPOTHESIS_LABELS['ennen-löydöstä']}”.
+            Lukitus tallentaa hypoteesin, koodit, järjestyksen ja aikaleiman SHA-256-tiivisteenä tälle laitteelle (oma
+            kirjaus, ei ulkopuolista todennusta). Ajoituksen ”{HYPOTHESIS_LABELS['ennen-löydöstä']}” saa vain lukitusta
+            seuraava ensimmäinen ajo, ja vain jos samaa koodijoukkoa ei ole ajettu millään järjestyksellä. Myöhemmät ajot
+            (eri siemen tai R) ovat eksploratiivisia, ja tehtävänannon reitit ovat aina ”{HYPOTHESIS_LABELS['löydön-jälkeen']}”.
+            Valitse siksi riittävä R ennen lukittua ajoa.
           </div>
-          <textarea className="input" id="mx-route-hyp" value={hyp} placeholder={defaultHyp} onChange={(e) => setHyp(e.target.value)} />
+          <textarea className="input" id="mx-route-hyp" value={hyp} placeholder={defaultHyp} onChange={(e) => setRouteForm({ hyp: e.target.value })} />
           <button
             type="button"
             className="mx-btn"
             data-testid="matrix-route-lock"
             disabled={codes.length < 2}
             onClick={async () => {
-              await lockRouteHypothesis((hyp || defaultHyp).trim(), codes, order);
-              setHyp('');
+              await lockRouteHypothesis((hyp || defaultHyp).trim(), codes, order, source.task);
+              setRouteForm({ hyp: '' });
             }}
           >
             Lukitse hypoteesi
@@ -329,47 +356,50 @@ function RouteTest() {
           {lock && (
             <div className="card flat mx-small" style={{ padding: 10 }}>
               <div className="mono faint">
-                {fmtDateTime(lock.createdAt)} · SHA-256 {lock.hash.slice(0, 16)}…
+                {fmtDateTime(lock.createdAt)} · SHA-256 {lock.hash.slice(0, 16)}… · {ON_DEVICE}
               </div>
               <div>{lock.text}</div>
             </div>
           )}
           <div className={`note ${preview.preregistered ? '' : 'warn'}`} data-testid="matrix-route-timing">
-            Tämän ajon hypoteesin ajoitus: <b>{HYPOTHESIS_LABELS[preview.timing]}</b>. {preview.reason}
+            Tämän ajon hypoteesin ajoitus: <b>{HYPOTHESIS_LABELS[preview.timing]}</b>
+            {preview.preregistered ? ` (${ON_DEVICE})` : ''}. {preview.reason}
           </div>
         </div>
 
         <button type="button" className="btn primary" data-testid="matrix-route-run" disabled={!canRun} onClick={run}>
-          Aja reittitesti
+          {running ? 'Reittitesti käynnissä…' : 'Aja reittitesti'}
         </button>
         {codes.length < 2 && <div className="mx-small faint">Valitse vähintään kaksi koodia.</div>}
         {running && (
-          <div className="section" style={{ gap: 6 }}>
+          <div className="section" style={{ gap: 6 }} data-testid="matrix-route-running">
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <span className="muted">
                 Reittitesti: {fmtN(running.done)} / {fmtN(running.total)}
               </span>
-              <button type="button" className="mx-btn ghost" onClick={() => void cancelEngine()}>
+              <button type="button" className="mx-btn ghost" data-testid="matrix-route-cancel" onClick={() => void cancelEngine()}>
                 Keskeytä
               </button>
             </div>
+            <div className="mx-small faint">{running.label}</div>
             <div className="progress">
               <i style={{ width: `${(100 * running.done) / Math.max(1, running.total)}%` }} />
             </div>
           </div>
         )}
-        {error && <div className="note err">{error}</div>}
+        {rt.error && <div className="note err">{rt.error}</div>}
       </div>
 
-      {shownRun && <RouteResult run={shownRun} nullValues={last && last.id === shownRun.id ? last.result.nullValues : null} />}
-      <RunList runs={runs} selected={selected} onSelect={setSelected} />
+      {shownRun && <RouteResult run={shownRun} nullValues={rt.last && rt.last.id === shownRun.id ? rt.last.nullValues : null} />}
+      <RunList runs={runs} total={runIndex.total} selected={rt.selected} onSelect={selectRouteRun} />
     </section>
   );
 }
 
 function RouteResult({ run, nullValues }: { run: RouteRunSummary; nullValues: Float64Array | null }) {
   const prereg = run.timing === 'ennen-löydöstä' && !!run.lockHash;
-  const v = classify(run.pValue, run.alpha, prereg);
+  // Luokitus lasketaan uudelleen: ennalta lukittu p ≤ α vaatii myös Wilsonin ylärajan ≤ α.
+  const v = classifyRouteRun(run);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
@@ -378,7 +408,10 @@ function RouteResult({ run, nullValues }: { run: RouteRunSummary; nullValues: Fl
     <div ref={ref} className="card section mx-route-result" data-testid="matrix-route-result" style={{ gap: 12 }}>
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <span className={`pill ${VERDICT_CLASS[v.verdict]}`}>{v.title}</span>
-        <span className="pill">{HYPOTHESIS_LABELS[run.timing]}</span>
+        <span className="pill">
+          {HYPOTHESIS_LABELS[run.timing]}
+          {prereg ? ` · ${ON_DEVICE}` : ''}
+        </span>
       </div>
       <div style={{ fontSize: 13.5 }}>{fiNum(v.text)}</div>
       <dl className="kv">
@@ -425,7 +458,10 @@ function RouteResult({ run, nullValues }: { run: RouteRunSummary; nullValues: Fl
       </dl>
       {run.picks && (
         <div className="section" style={{ gap: 6 }}>
-          <div className="eyebrow">Ikkunan valinnat (avaa osumasolmuna)</div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <span className="eyebrow">Ikkunan valinnat (avaa osumasolmuna)</span>
+            <LayerBadge layer="matemaattinen" />
+          </div>
           <div className="mx-btn-row">
             {run.picks.map((n, i) => (
               <button
@@ -447,16 +483,31 @@ function RouteResult({ run, nullValues }: { run: RouteRunSummary; nullValues: Fl
   );
 }
 
-function RunList({ runs, selected, onSelect }: { runs: RouteRunSummary[]; selected: string | null; onSelect: (id: string) => void }) {
-  const q = useMemo(() => benjaminiHochberg(runs.map((r) => r.pValue)), [runs]);
+function RunList({
+  runs,
+  total,
+  selected,
+  onSelect,
+}: {
+  runs: RouteRunSummary[];
+  /** Kaikkien ajojen määrä (rajaamaton hakemisto); `runs` voi olla rajattu. */
+  total: number;
+  selected: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const m = Math.max(total, runs.length);
+  const q = useMemo(() => routeBH(runs.map((r) => r.pValue), m), [runs, m]);
   if (!runs.length) return <div className="muted mx-small">Ei vielä ajettuja reittitestejä. Jokainen ajo kirjataan monivertailua varten.</div>;
-  const m = runs.length;
+  const older = m - runs.length;
   return (
     <div className="section" style={{ gap: 8 }}>
       <div className="eyebrow">Reittitestien loki ja monivertailu</div>
       <div className="note warn" data-testid="matrix-route-mc-warning">
         Matriisin reittitestejä ajettu {m}. Jos testejä on m kappaletta, noin m·α niistä antaa p ≤ α pelkällä sattumalla
         (nyt {(m * 0.05).toFixed(1).replace('.', ',')}, kun α = 0,05). Raportoi kaikki, ei vain parhaita.
+        {older > 0 &&
+          ` Taulukossa on ${runs.length} uusinta ajoa. ${older} vanhemman ajon p-arvot on tiivistetty (tallessa vain kysymys, ` +
+            `ensimmäisen ajon aika ja määrä). BH-q käyttää m = ${m} ja olettaa puuttuvat p-arvot ykkösiksi (varovainen arvio).`}
       </div>
       <div className="table-wrap">
         <table className="data">

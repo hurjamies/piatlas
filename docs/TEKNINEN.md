@@ -130,7 +130,7 @@ on alle 13 % (odotus 5 %), eli testi ei tuota järjestelmällisesti vääriä po
 
 ## 8. Testit
 
-`npm test` ajaa 219 testiä. Tehtävänannon hyväksymiskriteerit:
+`npm test` ajaa 277 testiä. Tehtävänannon hyväksymiskriteerit:
 
 | Kriteeri | Testi |
 | --- | --- |
@@ -147,18 +147,19 @@ on alle 13 % (odotus 5 %), eli testi ei tuota järjestelmällisesti vääriä po
 Täyden aineiston testit ohitetaan, jos `public/data/pi_digits_1m.txt` puuttuu. Pienen fixturen
 (2000 ensimmäistä desimaalia) testit ajetaan aina.
 
-`npm run e2e` (Playwright, puhelinkoko 412×915) tekee 52 tarkistusta. Ensimmäiset 22 kattavat ensimmäisen
+`npm run e2e` (Playwright, puhelinkoko 412×915) tekee 66 tarkistusta. Ensimmäiset 22 kattavat ensimmäisen
 version koko käyttötapauksen: ankkurin, MATTI- ja MINI-nimilaput 3D:ssä, napautusvalinnan 3D:ssä, spiraalissa,
 atlaksessa ja verkossa, lähdenumeroiden tarkistuksen, Monte Carlo -testin, esirekisteröinnin,
-satunnaisjonokontrollin, termin lisäyksen ääkkösillä ja tapahtuman linkityksen. Loput 30 käyvät läpi
-tarinamatriisin (luku 9). Konsolivirheitä ei saa olla. Sama ajetaan myös ilman Web Workeria
+satunnaisjonokontrollin, termin lisäyksen ääkkösillä ja tapahtuman linkityksen. Loput 44 käyvät läpi
+tarinamatriisin (luku 9; luettelo: MATRIISI.md, luku 10). Konsolivirheitä ei saa olla. Sama ajetaan myös ilman Web Workeria
 (`PI_ATLAS_NO_WORKER=1`) ja yhden tiedoston julkaisuversiolle.
 
 | Kriteeri | Testi |
 | --- | --- |
 | Ensimmäinen testireitti, haarat, 432-suunta, samannimiset | `tests/matrix-expand.test.ts`, `tests/matrix-story.test.ts` |
 | 369, hyppysäännöt ja reittitesti (determinismi, kalibrointi) | `tests/matrix-ops.test.ts`, `tests/matrix-route.test.ts` |
-| Tallennus ja lataus, ajoitussääntö, verkkokuvan asettelu | `tests/matrix-state.test.ts` |
+| Tallennus ja lataus, ajoitussääntö, verkkokuvan asettelu, solmuvalitsin | `tests/matrix-state.test.ts` |
+| Reittitestin tila storessa, lukitus, navigointi (Matriisi-painike, murut, valitsin) | `tests/matrix-actions.test.ts`, `tests/matrix-nav.test.ts` |
 
 ## 9. Tarinamatriisi
 
@@ -173,6 +174,7 @@ Määrittely, solmutyypit, suunnat, 369, hyppysäännöt ja reittitesti: [MATRII
 | 369-avausavain, hyppysäännöt, reittitesti | `src/core/matrix/ops369.ts`, `jumps.ts`, `route-test.ts` |
 | Sovellustila, tallennus ja tarkistimet, π-faktat, ajoitus | `src/state/matrix.ts` |
 | Toiminnot (avaus, 369, tallennus, reittitesti, tarinan muokkaus) | `src/state/matrix-actions.ts` |
+| Käsin valittu solmu ja osuma polun loppuun, tapahtumien henkilölinkit | `src/state/matrix-select.ts` |
 | Näkymä ja osat | `src/ui/views/MatrixView.tsx`, `src/ui/matrix/` |
 
 - Ydinkirjasto on puhdas: sama viite ja sama ympäristö antavat samat yhteydet samassa järjestyksessä.
@@ -181,7 +183,7 @@ Määrittely, solmutyypit, suunnat, 369, hyppysäännöt ja reittitesti: [MATRII
   pääsäikeessä. Sama siemen antaa saman p:n kummassakin.
 - Matriisin tila tallennetaan samaan `localStorage`-avaimeen kuin muu tila (`pi-atlas:v1`): tarinamalli,
   reitti (solmuavaimet ja `via`), tallennetut reitit, 500 viimeisintä lokimerkintää, 2000 vierailua, 300
-  reittitestiä ja lukitukset. Odottava tallennus tehdään heti, kun sovellus siirtyy taustalle (`pagehide`,
+  reittitestiä, rajaamaton ajohakemisto (`runIndex`) ja lukitukset. Odottava tallennus tehdään heti, kun sovellus siirtyy taustalle (`pagehide`,
   `visibilitychange`). Virheellinen data korvataan oletuksella kohde kerrallaan.
 - Verkkokuva on SVG. Kehän kulmat valitaan niin, ettei keskilappu peitä solmuja (`ringLayout`,
   `src/ui/matrix/labels.ts`); kuvan korkeus seuraa nimilappujen ulottumaa.

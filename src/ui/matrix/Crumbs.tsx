@@ -1,11 +1,14 @@
 // Murupolku: lähtöankkurista fokukseen. Jokainen muru näyttää tietokerroksen (π-data / Tarinaverkko) ja
 // yhteyden tyypin, jota pitkin siihen tultiin. Kerrosvaihdon kohdalla on näkyvä erotin. Pitkä polku vierii
 // sivuttain, joten alarivi näyttää aina myös kerrosten järjestyksen (esim. "π-data 3 | tarina 3"): kerrosvaihto
-// pysyy näkyvissä, vaikka erotin olisi vieritetty pois näkyvistä.
+// pysyy näkyvissä, vaikka erotin olisi vieritetty pois näkyvistä. Käsin valittu solmu (solmuvalitsin, Tarina-sivu,
+// tapahtumapaneeli) näkyy murussa merkinnällä "valittu" (title: "valittu käyttäjän toimesta …"): se ei ole laskettu
+// yhteys. Muru sulkee myös avoimen alasivun (Tarina, Reitit, Loki), jotta fokus näkyy.
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type { MatrixEnv, Realm } from '../../core/matrix/types';
 import { LAYER_LABELS, REALM_LABELS, realmOf } from '../../core/matrix/types';
 import { jumpToCrumb, resetToRoot } from '../../state/matrix-actions';
+import { SELECTED_BY_USER_GROUP } from '../../state/matrix-select';
 import { useApp } from '../../state/store';
 import { IconAnchor } from '../components/Icons';
 import { useTrailInfo } from './hooks';
@@ -84,7 +87,8 @@ export function Crumbs({ env }: { env: MatrixEnv }) {
                   title={`${title} — ${REALM_LABELS[realm]}${st.via ? ` · ${LAYER_LABELS[st.via.layer]}: ${st.via.relation}` : ''}`}
                 >
                   <span className="mx-crumb-meta">
-                    {REALM_LABELS[realm]} · {st.via ? LAYER_LABELS[st.via.layer] : 'lähtö'}
+                    {REALM_LABELS[realm]} ·{' '}
+                    {!st.via ? 'lähtö' : st.via.group === SELECTED_BY_USER_GROUP ? 'valittu' : LAYER_LABELS[st.via.layer]}
                   </span>
                   <span className="mx-crumb-title">{title}</span>
                 </button>

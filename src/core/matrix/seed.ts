@@ -7,11 +7,21 @@ import type { Gloss, HypothesisMeta, Person, StoryModel, StoryPath } from './typ
 export const SEED_VERSION = 'story-seed-2026-10-16';
 const T0 = '2026-10-16T00:00:00.000Z';
 
-const unknownTiming: HypothesisMeta = {
-  timing: 'ei-tiedossa',
+/**
+ * Miksi tehtävänannon reitit ja polut ovat 'löydön-jälkeen': ne muodostettiin aiemmin ilmoitettujen π-sijaintien
+ * ympärille. Sama perustelu näytetään reittitestissä (src/state/matrix.ts: taskDerivedReason).
+ */
+export const TASK_TIMING_NOTE =
+  'Tehtävänannon reitit ja polut muodostettiin aiemmin ilmoitettujen π-sijaintien ympärille (IDA @858 511 ' +
+  'ilmoitettiin ennen tätä tutkimusta; HANNA @858 610, Δn +99, löytyi tässä tutkimuksessa), joten hypoteesi on ' +
+  'muodostettu löydön jälkeen. Lukitus ei muuta tätä.';
+
+/** Tehtävänannosta tuotujen polkujen ajoitus. Ei koskaan 'ennen-löydöstä'. */
+export const TASK_TIMING: HypothesisMeta = {
+  timing: 'löydön-jälkeen',
   statedAt: T0,
   lockHash: null,
-  note: 'Tuotu tehtävänannosta. Ei tiedetä, muodostettiinko polku ennen vai jälkeen aiempien π-löytöjen.',
+  note: `Tuotu tehtävänannosta. ${TASK_TIMING_NOTE}`,
 };
 
 function person(id: string, name: string, homonymOrdinal: number | null, description: string, roles: string[] = []): Person {
@@ -47,7 +57,7 @@ export function createSeedStory(): StoryModel {
       ],
       note: 'Numerot 6-2-9 on johdettu MAXin T9-koodista 629. Polun ja koodin yhtäläisyys on rakenteellinen, ei löydös.',
       source: 'tehtävänanto',
-      hypothesis: unknownTiming,
+      hypothesis: { ...TASK_TIMING },
       createdAt: T0,
     },
     {
@@ -61,7 +71,7 @@ export function createSeedStory(): StoryModel {
       ],
       note: 'Hanna-askel on asetettu testireitin mukaan HANNA III:een. Käyttäjä voi vaihtaa henkilön.',
       source: 'tehtävänanto',
-      hypothesis: unknownTiming,
+      hypothesis: { ...TASK_TIMING },
       createdAt: T0,
     },
   ];

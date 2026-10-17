@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { comparePersons, personLabel } from '../../core/matrix/story';
 import { parseHitKey } from '../../core/types';
-import { addEvent, removeEvent, select, toggleEventLink, updateEvent } from '../../state/actions';
-import { toggleEventPerson } from '../../state/matrix-actions';
+import { addEvent, openPanel, removeEvent, select, toggleEventLink, updateEvent } from '../../state/actions';
+import { openSelectedNode, toggleEventPerson } from '../../state/matrix-actions';
 import { useApp } from '../../state/store';
 import { fmtDate, fmtN } from '../format';
 
@@ -12,6 +12,7 @@ export function EventsPanel() {
   const sel = useApp((s) => s.selection);
   const story = useApp((s) => s.matrix.story);
   const persons = [...story.persons].sort(comparePersons);
+  const known = new Set(story.persons.map((p) => p.id));
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
   const [note, setNote] = useState('');
@@ -91,9 +92,37 @@ export function EventsPanel() {
                   <span className="dot" /> {personLabel(story, p)}
                 </button>
               ))}
+              {/* Linkki henkilöön, jota tarinassa ei enää ole (esim. tarina korvattiin): poistettavissa. */}
+              {[...new Set(e.personIds ?? [])]
+                .filter((id) => !known.has(id))
+                .map((id) => (
+                  <button
+                    key={`gone-${id}`}
+                    type="button"
+                    className="toggle ev-person ev-person-gone"
+                    data-testid="event-person-gone"
+                    aria-pressed="true"
+                    aria-label={`Poista linkki henkilöön ${id} (poistettu tarinasta)`}
+                    title="Henkilöä ei ole enää tarinassa. Napauta poistaaksesi linkin."
+                    onClick={() => toggleEventPerson(e.id, id)}
+                  >
+                    <span className="dot" /> {id} (poistettu) ×
+                  </button>
+                ))}
             </div>
           </div>
           <div className="row">
+            <button
+              type="button"
+              className="btn small"
+              data-testid="event-open-matrix"
+              onClick={() => {
+                openSelectedNode({ kind: 'event', eventId: e.id }, 'tapahtumapaneeli');
+                openPanel(null);
+              }}
+            >
+              Avaa matriisissa
+            </button>
             {sel && (
               <button className="btn small" onClick={() => toggleEventLink(e.id, sel)}>
                 {e.linkedHits.includes(`${sel.termId}@${sel.n}`) ? 'Poista linkki valittuun' : 'Linkitä valittuun osumaan'}

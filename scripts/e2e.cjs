@@ -1,7 +1,7 @@
 // Päästä päähän -savutesti ja kuvakaappaukset puhelinkoossa (Chromium/Playwright).
 // Käyttö: npm run build && npx vite preview --port 4173 &  sitten  npm run e2e
 // Playwright ei ole projektin riippuvuus: asenna se tarvittaessa (npm i -D playwright) tai aja NODE_PATH=$(npm root -g).
-// Ensimmäiset 22 tarkistusta: MVP-1–3. Sen jälkeen tarinamatriisi (Matriisi-välilehti) 412 px:ssä ja asettelu
+// Ensimmäiset 22 tarkistusta: MVP-1–3. Sen jälkeen 44 tarinamatriisin tarkistusta (Matriisi-välilehti) 412 px:ssä ja asettelu
 // 360 px:ssä. PI_ATLAS_SHOTS = kuvien kansio (oletus docs/screenshots), PI_ATLAS_SHOTS_360 = 360 px:n kuvat
 // (valinnainen), PI_ATLAS_NO_WORKER=1 = ilman Web Workeria.
 const path = require('path');
@@ -506,6 +506,33 @@ const check = (name, ok, extra = '') => {
     all42662.rows.length === 7 && all42662.rows.every((r) => /^hit:42662@\d+$/.test(r.key) && /✓ tarkistettu/.test(r.text)) && all42662.rows.some((r) => r.key === 'hit:42662@858610'),
     all42662.rows.map((r) => r.key.split('@')[1]).join(', '),
   );
+  // 369 koodisolmussa 42662: vertailumenetelmät eivät löydä mitään → kokonaistulos ”Ei uutta”. Geometrisen kävelyn
+  // askeleet ovat ”raportoituja askeleita” (tuotetaan aina), eivät löytöjä, eivätkä ne estä ”Ei uutta” -tulosta.
+  await page.click('[data-testid="matrix-369"]');
+  await page.waitForSelector('[data-testid="matrix-369-result"]', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  const code369 = await page.evaluate(() => {
+    const res = document.querySelector('[data-testid="matrix-369-result"]');
+    const t = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const geo = [...res.querySelectorAll('.mx-method')].find((m) => m.querySelector('.mx-method-id')?.textContent === 'geo-369');
+    return {
+      summary: t(res.querySelector('.mx-summary')?.textContent),
+      noneChip: !!res.querySelector('.mx-summary.none .mx-chip'),
+      geoChips: geo ? [...geo.querySelectorAll('summary .mx-chip')].map((c) => ({ text: t(c.textContent), gold: c.classList.contains('gold') })) : [],
+      geoBlocks: geo ? [...geo.querySelectorAll('.mx-dirblock')].map((b) => ({ text: t(b.textContent), found: b.classList.contains('found') })) : [],
+      geoReported: geo ? geo.querySelectorAll('[data-testid="matrix-369-reported"]').length : -1,
+    };
+  });
+  check(
+    'matriisi: 369 koodissa 42662 — kokonaistulos ”Ei uutta”, geo-369 vain raportoituja askeleita',
+    code369.noneChip &&
+      /^Ei uutta Ei uutta: mikään menetelmä ei löytänyt yhteyttä\. Lisäksi geo-369: \d+ raportoitua kävelyaskelta \(tuotetaan aina, eivät ole löytöjä; odotusta ei määritellä\)\.$/.test(code369.summary) &&
+      code369.geoChips.length === 2 &&
+      code369.geoChips.every((c) => /^(234|432): (\d+ raportoitua askelta|1 raportoitu askel|ei askeleita)$/.test(c.text) && !c.gold) &&
+      code369.geoBlocks.length === 2 &&
+      code369.geoBlocks.every((b) => /raportoidut askeleet \(aina tuotetaan\) \d+ · odotus ei määritelty/.test(b.text) && /Ei löytöjä: kävelyn askeleet tuotetaan aina/.test(b.text) && !b.found),
+    `${code369.summary.slice(0, 150)} · geo: ${code369.geoChips.map((c) => c.text + (c.gold ? ' (kulta)' : '')).join(', ')}`,
+  );
   await page.click('[data-testid="matrix-view-lista"]');
   await page.waitForTimeout(250);
   const listHasNet = await page.$('[data-testid="matrix-net"]');
@@ -554,6 +581,8 @@ const check = (name, ok, extra = '') => {
   await page.fill('#mx-save-interp', 'Oma testitulkinta: tarinakerros, ei todiste.');
   await page.selectOption('#mx-save-timing', 'löydön-jälkeen');
   await layoutAt(page, 'tallennuslomake');
+  // Lukituksia ei vielä ole: lomake kertoo, miksi ”ennen löydöstä” ei ole valittavissa.
+  const lockHelp = norm(await page.textContent('[data-testid="matrix-save-lock-help"]').catch(() => ''));
   await page.click('[data-testid="matrix-save-confirm"]');
   await page.waitForTimeout(250);
   await page.click('[data-testid="matrix-sub-reitit"]');
@@ -565,28 +594,58 @@ const check = (name, ok, extra = '') => {
       /Muodostettu löydön jälkeen/.test(savedTxt) &&
       /π \| tarina/.test(savedTxt) &&
       /42662 @858.610 ✓ digits 858.610–858.614 = 42662/.test(savedTxt) &&
-      /Oma testitulkinta/.test(savedTxt),
+      /Oma testitulkinta/.test(savedTxt) &&
+      /tämän reitin koodien hypoteesi on lukittu/.test(lockHelp),
     savedTxt.slice(0, 120),
+  );
+  // Tallennetun reitin jokainen askel näyttää kerroksen ja yhteyden tyypin (kuten elävä murupolku).
+  const savedLayers = await page.$$eval('[data-testid="matrix-saved-route"] [data-testid="matrix-saved-step-layer"]', (els) =>
+    els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()),
+  );
+  check(
+    'matriisi: tallennetun reitin askeleet näyttävät kerroksen ja tyypin',
+    savedLayers.length === 4 &&
+      savedLayers[0] === 'π-data · lähtö' &&
+      savedLayers.slice(1).every((l) => /^(π-data|Tarinaverkko) · (Matemaattinen|Geometrinen|Ajallinen|Symbolinen)$/.test(l)) &&
+      savedLayers.slice(0, 3).every((l) => l.startsWith('π-data')) &&
+      savedLayers[3].startsWith('Tarinaverkko'),
+    savedLayers.join(' › '),
   );
   await layoutAt(page, 'reitit');
 
-  // Reittitesti R = 200: lukitus ennen ensimmäistä ajoa, sitten ajo.
+  // Reittitesti R = 200 ensimmäiselle testireitille. Reitti tulee tehtävänannosta (muodostettu IDA @858 511:n ja
+  // HANNA @858 610:n ympärille), joten lukituskaan ei tee siitä ”ennen löydöstä”: ajoitus on ”löydön jälkeen” ja syy näkyy.
+  const timingTxt = () => mtext(page, '[data-testid="matrix-route-timing"]');
   await page.selectOption('#mx-route-r', '200');
+  const timingBefore = await timingTxt();
   await page.click('[data-testid="matrix-route-lock"]');
-  await page.waitForFunction(() => /Määritelty ennen löydöstä/.test(document.querySelector('[data-testid="matrix-route-timing"]')?.textContent || ''), null, { timeout: 10000 });
+  await page.waitForSelector('.mx-lock .card', { timeout: 10000 });
+  await page.waitForTimeout(150);
+  const timingLocked = await timingTxt();
+  const lockCard = await mtext(page, '.mx-lock .card');
+  const taskTiming = (t) =>
+    /^Tämän ajon hypoteesin ajoitus: Muodostettu löydön jälkeen\. Reitti tulee tehtävänannosta \(ensimmäinen testireitti MAX → HANNA → SALLA → IDA\)\./.test(t) &&
+    !/Määritelty ennen löydöstä/.test(t);
+  check(
+    'matriisi: ensimmäistä testireittiä ei voi lukita ”ennen löydöstä” — ajoitus ”löydön jälkeen”, syy näkyy',
+    taskTiming(timingBefore) && taskTiming(timingLocked) && /SHA-256 [0-9a-f]{16}… · lukittu tällä laitteella/.test(lockCard),
+    `${timingLocked.slice(0, 160)} · ${lockCard.slice(0, 60)}`,
+  );
   await page.click('[data-testid="matrix-route-run"]');
   await page.waitForSelector('[data-testid="matrix-route-result"]', { timeout: 120000 });
   await page.waitForTimeout(1000); // tulos vieritetään näkyviin pehmeästi
   const rres = await mtext(page, '[data-testid="matrix-route-result"]');
   const mcw = await mtext(page, '[data-testid="matrix-route-mc-warning"]');
   check(
-    'matriisi: reittitesti R = 200 näyttää p:n ja määritelmän',
+    'matriisi: reittitesti R = 200 näyttää p:n ja määritelmän (lukittunakin ”löydön jälkeen”)',
     /p \(Monte Carlo\)\s*\d,\d+/.test(rres) &&
       /Testisuure: lyhin ikkuna reitille 629 → 42662 → 72552 → 432/.test(rres) &&
       /R = 200 kertaa/.test(rres) &&
-      /Määritelty ennen löydöstä \(lukittu\)/.test(rres) &&
+      /Muodostettu löydön jälkeen/.test(rres) &&
+      /Ajoitus\s*Muodostettu löydön jälkeen — Reitti tulee tehtävänannosta/.test(rres) &&
+      !/Määritelty ennen löydöstä/.test(rres) &&
       /Matriisin reittitestejä ajettu 1\./.test(mcw),
-    (rres.match(/p \(Monte Carlo\).{0,40}/) || [''])[0],
+    `${(rres.match(/p \(Monte Carlo\).{0,40}/) || [''])[0]} · ${(rres.match(/Ajoitus\s*Muodostettu.{0,60}/) || [''])[0]}`,
   );
   await layoutAt(page, 'reittitesti');
   await scrollTo(page, '[data-testid="matrix-route-result"]');
@@ -594,13 +653,153 @@ const check = (name, ok, extra = '') => {
   await noToast(page);
   await shot(page, '16-matriisi-reitit');
 
+  // Käynnissä oleva reittitesti säilyy, kun Reitit-sivulta poistutaan: eteneminen, parametrit ja Keskeytä näkyvät
+  // palatessa (tai valmis tulos). Keskeytys pysäyttää ajon, eikä keskeytettyä ajoa kirjata.
+  await page.selectOption('#mx-route-r', '5000');
+  await page.selectOption('#mx-route-strings', '20');
+  await page.click('[data-testid="matrix-route-run"]');
+  await page.waitForSelector('[data-testid="matrix-route-running"]', { timeout: 10000 });
+  const runBtn = async () => ({
+    text: norm(await page.textContent('[data-testid="matrix-route-run"]')),
+    disabled: await page.isDisabled('[data-testid="matrix-route-run"]'),
+  });
+  const btnDuring = await runBtn();
+  await scrollTo(page, '[data-testid="matrix-route-running"]', 120);
+  await page.waitForTimeout(150);
+  await shot(page, '19-matriisi-reittitesti-kaynnissa');
+  await page.click('[data-testid="matrix-sub-loki"]');
+  await page.waitForSelector('[data-testid="matrix-log"]');
+  await page.waitForTimeout(300);
+  await page.click('[data-testid="matrix-sub-reitit"]');
+  await page.waitForSelector('[data-testid="matrix-route-test"]');
+  const back5000 = await page.evaluate(() => {
+    const t = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const run = document.querySelector('[data-testid="matrix-route-run"]');
+    return {
+      running: t(document.querySelector('[data-testid="matrix-route-running"]')?.textContent),
+      cancel: !!document.querySelector('[data-testid="matrix-route-cancel"]'),
+      runDisabled: !!run?.disabled,
+      runText: t(run?.textContent),
+      R: document.querySelector('#mx-route-r')?.value,
+      strings: document.querySelector('#mx-route-strings')?.value,
+      result: t(document.querySelector('[data-testid="matrix-route-result"]')?.textContent),
+    };
+  });
+  const stillRunning = !!back5000.running;
+  check(
+    'matriisi: reittitesti säilyy Reitit-sivulta poistuttaessa (eteneminen ja Keskeytä näkyvät palatessa)',
+    btnDuring.disabled &&
+      btnDuring.text === 'Reittitesti käynnissä…' &&
+      back5000.R === '5000' &&
+      back5000.strings === '20' &&
+      (stillRunning
+        ? /^Reittitesti: [\d\s]+ \/ 5.020\s*Keskeytä\s*.*R = 5000, siemen ”\d+”, 20 satunnaisjonoa/.test(back5000.running) &&
+          back5000.cancel &&
+          back5000.runDisabled &&
+          back5000.runText === 'Reittitesti käynnissä…'
+        : /R=5.000/.test(back5000.result)),
+    stillRunning ? back5000.running.slice(0, 120) : `valmis ennen paluuta: ${back5000.result.slice(0, 80)}`,
+  );
+  if (stillRunning) {
+    await page.click('[data-testid="matrix-route-cancel"]');
+    await page.waitForSelector('[data-testid="matrix-route-running"]', { state: 'detached', timeout: 15000 });
+    await page.waitForTimeout(200);
+    const cancelled = await page.evaluate(() => ({
+      err: (document.querySelector('[data-testid="matrix-route-test"] .note.err')?.textContent || '').trim(),
+      warn: (document.querySelector('[data-testid="matrix-route-mc-warning"]')?.textContent || '').replace(/\s+/g, ' '),
+      runDisabled: !!document.querySelector('[data-testid="matrix-route-run"]')?.disabled,
+      runs: JSON.parse(localStorage.getItem('pi-atlas:v1') || '{}').matrix?.routeRuns?.length,
+    }));
+    check(
+      'matriisi: Keskeytä pysäyttää reittitestin, eikä keskeytettyä ajoa kirjata',
+      cancelled.err === 'Keskeytetty' && /Matriisin reittitestejä ajettu 1\./.test(cancelled.warn) && !cancelled.runDisabled,
+      `${cancelled.err} · ${(cancelled.warn.match(/ajettu \d+/) || [''])[0]}`,
+    );
+  } else {
+    // Ajo ehti valmistua ennen paluuta: tulos näkyi, eikä keskeytettävää ole.
+    await page.waitForSelector('[data-testid="matrix-route-running"]', { state: 'detached', timeout: 120000 });
+    check('matriisi: Keskeytä pysäyttää reittitestin, eikä keskeytettyä ajoa kirjata', false, 'ajo valmistui ennen paluuta, keskeytystä ei voitu testata');
+  }
+  const runsSoFar = stillRunning ? 1 : 2;
+
+  // Vahvistava polku: uusi koodijoukko (MINI 6464 + MATTI 62884, ei tehtävänannosta) lukitaan ennen ensimmäistä ajoa →
+  // ensimmäinen ajo on ”ennen löydöstä (lukittu)”. Toinen ajo eri siemenellä on ”löydön jälkeen”: lukitus kattaa
+  // vain ensimmäisen ajon.
+  await page.selectOption('#mx-route-r', '200');
+  await page.selectOption('#mx-route-strings', '0');
+  await page.selectOption('#mx-route-source', 'trail');
+  for (const name of ['MINI', 'MATTI']) {
+    await page.fill('#mx-route-extra', name);
+    await page.click('[data-testid="matrix-route-test"] form.mx-btn-row button[type="submit"]');
+    await page.waitForTimeout(100);
+  }
+  for (const code of ['432', '42662']) {
+    const chip = page.locator('[data-testid="matrix-route-test"] .mx-code-chip', { hasText: code }).first();
+    if ((await chip.getAttribute('aria-pressed')) === 'true') await chip.click();
+  }
+  await page.waitForTimeout(150);
+  const chipsOn = await page.$$eval('[data-testid="matrix-route-test"] .mx-code-chip[aria-pressed="true"] .mono', (els) => els.map((e) => e.textContent));
+  const freshTiming = await timingTxt();
+  await page.click('[data-testid="matrix-route-lock"]');
+  await page.waitForFunction(
+    () => /Määritelty ennen löydöstä \(lukittu\) \(lukittu tällä laitteella\)/.test(document.querySelector('[data-testid="matrix-route-timing"]')?.textContent || ''),
+    null,
+    { timeout: 10000 },
+  );
+  const preTiming = await timingTxt();
+  const resultId = () => page.evaluate(() => document.querySelector('[data-testid="matrix-route-result"] .kv')?.textContent || '');
+  let prevResult = await resultId();
+  const runAndWait = async () => {
+    await page.click('[data-testid="matrix-route-run"]');
+    await page.waitForFunction(
+      (prev) => {
+        const r = document.querySelector('[data-testid="matrix-route-result"] .kv')?.textContent || '';
+        return r && r !== prev && !document.querySelector('[data-testid="matrix-route-running"]');
+      },
+      prevResult,
+      { timeout: 120000 },
+    );
+    await page.waitForTimeout(600);
+    prevResult = await resultId();
+    return mtext(page, '[data-testid="matrix-route-result"]');
+  };
+  const firstLocked = await runAndWait();
+  check(
+    'matriisi: uuden koodijoukon lukittu ensimmäinen ajo on ”ennen löydöstä (lukittu)”',
+    chipsOn.join(',') === '6464,62884' &&
+      /Ajoitus ei tiedossa/.test(freshTiming) &&
+      /Määritelty ennen löydöstä \(lukittu\) · lukittu tällä laitteella/.test(firstLocked) &&
+      /Reitti\s*MINI 6464 → MATTI 62884/.test(firstLocked),
+    `${chipsOn.join(',')} · ${preTiming.slice(0, 90)} · ${(firstLocked.match(/^.{0,90}/) || [''])[0]}`,
+  );
+  const seed0 = await page.inputValue('#mx-route-seed');
+  await page.fill('#mx-route-seed', '7');
+  await page.waitForTimeout(150);
+  const secondTiming = await timingTxt();
+  const secondRun = await runAndWait();
+  const mcw3 = await mtext(page, '[data-testid="matrix-route-mc-warning"]');
+  check(
+    'matriisi: lukitus kattaa vain ensimmäisen ajon — toinen ajo eri siemenellä on ”löydön jälkeen”',
+    /^Tämän ajon hypoteesin ajoitus: Muodostettu löydön jälkeen\./.test(secondTiming) &&
+      /Lukitus kattaa vain ensimmäisen ajon/.test(secondTiming) &&
+      /Muodostettu löydön jälkeen/.test(secondRun) &&
+      !/Määritelty ennen löydöstä/.test(secondRun) &&
+      /kattaa vain ensimmäisen ajon/.test(secondRun) &&
+      /siemen ”7”/.test(secondRun) &&
+      new RegExp(`Matriisin reittitestejä ajettu ${runsSoFar + 2}\\.`).test(mcw3),
+    `${secondTiming.slice(40, 200)} · ${(mcw3.match(/ajettu \d+/) || [''])[0]}`,
+  );
+  await layoutAt(page, 'reittitesti: lukittu koodijoukko');
+  await page.fill('#mx-route-seed', seed0);
+  await page.selectOption('#mx-route-source', 'first');
+
   // Testit-välilehti: matriisin reittitestit omalla rivillään, testilaskuri ennallaan.
   await page.click('[data-testid="tab-tests"]');
   await page.waitForSelector('[data-testid="tests-matrix-runs"]');
   const tl = await mtext(page, '[data-testid="tests-view"]');
   check(
     'Testit: matriisin reittitestit erillisellä rivillä',
-    /Matriisin reittitestejä: 1 \(ks\. Matriisi → Reitit\)/.test(tl) && /Ajettu 3 testiä/.test(tl),
+    new RegExp(`Matriisin reittitestejä: ${runsSoFar + 2} \\(ks\\. Matriisi → Reitit\\)`).test(tl) && /Ajettu 3 testiä/.test(tl),
     (tl.match(/Matriisin reittitestejä[^)]*\)/) || [''])[0],
   );
   await page.click('[data-testid="tab-matrix"]');
@@ -654,7 +853,10 @@ const check = (name, ok, extra = '') => {
   });
   check(
     'matriisi: tarina, reitti ja reittitestit säilyvät uudelleenlatauksessa',
-    afterReload.persons === 8 && afterReload.saved === 1 && afterReload.runs === 1 && afterReload.trail.join(' ') === 'root hit:432@858511 hit:42662@858610 name:HANNA',
+    afterReload.persons === 8 &&
+      afterReload.saved === 1 &&
+      afterReload.runs === runsSoFar + 2 &&
+      afterReload.trail.join(' ') === 'root hit:432@858511 hit:42662@858610 name:HANNA',
     JSON.stringify(afterReload),
   );
 
@@ -670,18 +872,197 @@ const check = (name, ok, extra = '') => {
   const sheet3 = await mtext(page, '[data-testid="hit-sheet"]');
   const curTab = await page.getAttribute('[data-testid="tab-map"]', 'aria-current');
   check('matriisi: Spiraali-painike avaa kartan ja osuman HANNA @858 610', curTab === 'page' && /HANNA/.test(sheet3) && /858.610/.test(sheet3), sheet3.slice(0, 70));
-  // Takaisin: alapaneelin Matriisi-painike avaa saman osuman reittinä juuri → koodi → osuma.
-  await page.click('.sheet-head');
-  await page.waitForSelector('[data-testid="hit-open-matrix"]');
-  await page.click('[data-testid="hit-open-matrix"]');
-  await page.waitForSelector('[data-testid="matrix-crumb-2"]');
-  await page.waitForTimeout(250);
-  const back = await crumbsOf(page);
+  // Takaisin: alapaneelin Matriisi-painike säilyttää nykyisen polun. Osuma HANNA @858 610 on jo polulla
+  // (juuri › 432 @858 511 › 42662 @858 610), joten polku pysyy ennallaan ja fokus palaa siihen.
+  const openHitFromSheet = async () => {
+    if (!(await page.isVisible('[data-testid="hit-open-matrix"]'))) await page.click('.sheet-head');
+    await page.waitForSelector('[data-testid="hit-open-matrix"]');
+    await page.click('[data-testid="hit-open-matrix"]');
+    await page.waitForSelector('[data-testid="matrix-focus"]');
+    await page.waitForTimeout(250);
+    const toast = norm(await page.textContent('.toast').catch(() => ''));
+    return { crumbs: await crumbsOf(page), toast };
+  };
+  const back = await openHitFromSheet();
   check(
-    'matriisi: osuman Matriisi-painike avaa reitin juuri → koodi → osuma',
-    back.length === 3 && /HANNA 42662/.test(back[1].title) && /^42662 @858.610$/.test(back[2].title) && /^π-data · Matemaattinen$/.test(back[2].meta),
-    back.map((c) => c.title).join(' › '),
+    'matriisi: osuman Matriisi-painike säilyttää polun (osuma jo polulla → palataan siihen)',
+    back.crumbs.length === 3 &&
+      /^432 @858.511$/.test(back.crumbs[1].title) &&
+      /^42662 @858.610$/.test(back.crumbs[2].title) &&
+      /^π-data · Matemaattinen$/.test(back.crumbs[2].meta) &&
+      /Osuma 42662 @858.610 on jo polulla: palattiin siihen\./.test(back.toast),
+    `${back.crumbs.map((c) => c.title).join(' › ')} · ${back.toast}`,
   );
+  // Polulla olematon osuma (MINI @858 960 kartalta) lisätään polun loppuun: murujen määrä kasvaa, ei nollaudu.
+  await noToast(page);
+  await page.click('[data-testid="tab-map"]');
+  await page.waitForSelector('[data-testid="spiral-canvas"]', { timeout: 10000 });
+  await page.waitForTimeout(400);
+  const miniSheet = await tapMap(858960);
+  const grown = /MINI/.test(miniSheet) && /858.960/.test(miniSheet) ? await openHitFromSheet() : { crumbs: [], toast: '' };
+  const lastCrumb = grown.crumbs[grown.crumbs.length - 1];
+  check(
+    'matriisi: osuman Matriisi-painike lisää uuden osuman polun loppuun (3 → 4 murua)',
+    grown.crumbs.length === 4 &&
+      grown.crumbs.slice(0, 3).map((c) => c.title).join('|') === back.crumbs.map((c) => c.title).join('|') &&
+      /^6464 @858.960$/.test(lastCrumb?.title || '') &&
+      /^π-data · Matemaattinen$/.test(lastCrumb?.meta || '') &&
+      /Osuma 6464 @858.960 lisättiin polun loppuun \(avattu osumasta\)\. Aiempi polku säilyi\./.test(grown.toast),
+    `${miniSheet.slice(0, 40)} · ${grown.crumbs.map((c) => c.title).join(' › ')} · ${grown.toast}`,
+  );
+
+  // Solmuvalitsin: tulkinta 23 (symbolinen, tarinaverkko) ja koodi 43 (π-data), joihin ei ole laskettua särmää
+  // polulta. Valinta lisätään murupolun loppuun askeleena ”valittu käyttäjän toimesta”, eikä se ole laskettu yhteys.
+  const pick = async (q, key) => {
+    await noToast(page);
+    await scrollTop(page);
+    if (!(await page.isVisible('[data-testid="matrix-picker-input"]'))) await page.click('[data-testid="matrix-picker"] > summary');
+    await page.fill('[data-testid="matrix-picker-input"]', q);
+    const item = page.locator(`[data-testid="matrix-pick"][data-key="${key}"]`);
+    await item.waitFor({ timeout: 5000 });
+    const offered = await page.$$eval('[data-testid="matrix-pick"]', (els) => els.map((e) => e.getAttribute('data-key')));
+    if (q === '23') {
+      await layoutAt(page, 'solmuvalitsin');
+      await shot(page, '18-matriisi-valitsin');
+    }
+    await item.click();
+    await page.waitForTimeout(300);
+    const crumbTitles = await page.$$eval('[data-testid^="matrix-crumb-"]', (els) => els.map((e) => e.getAttribute('title') || ''));
+    return {
+      offered,
+      crumbs: await crumbsOf(page),
+      lastTitleAttr: crumbTitles[crumbTitles.length - 1] || '',
+      banner: norm(await page.textContent('[data-testid="matrix-realm-banner"]').catch(() => '')),
+      focus: await focusTitle(page),
+      pickerOpen: await page.isVisible('[data-testid="matrix-picker-input"]'),
+    };
+  };
+  const g23 = await pick('23', 'gloss:g-23');
+  const g23Code = await group(page, 'Koodi');
+  const g23Last = g23.crumbs[g23.crumbs.length - 1];
+  check(
+    'matriisi: solmuvalitsin avaa tulkinnan 23 (Tarinaverkko · symbolinen, kerrosvaihto näkyy)',
+    g23.offered.includes('code:23') &&
+      g23.crumbs.length === 5 &&
+      g23Last?.meta === 'Tarinaverkko · valittu' &&
+      /Tarinaverkko · Symbolinen: valittu käyttäjän toimesta \(solmuvalitsin\)/.test(g23.lastTitleAttr) &&
+      /Siirryt piin todellisesta datasta symboliseen tarinaverkkoon\./.test(g23.banner) &&
+      /Kerrosvaihto askeleessa 4: valittu käyttäjän toimesta \(solmuvalitsin\)/.test(g23.banner) &&
+      g23Code.rows.some((r) => r.key === 'code:23') &&
+      !g23.pickerOpen,
+    `${g23.focus} · ${g23Last?.meta} · ${g23.banner.slice(0, 90)} · ${g23.offered.slice(0, 4).join(' ')}`,
+  );
+  await layoutAt(page, 'tulkinta 23 (valittu)');
+  await edgeRowsAt(page, 'tulkinta 23 (valittu)');
+  await scrollTop(page);
+  await page.waitForTimeout(150);
+  await noToast(page);
+  await shot(page, '18a-matriisi-tulkinta-23');
+  const c43 = await pick('43', 'code:43');
+  const c43Last = c43.crumbs[c43.crumbs.length - 1];
+  const c43All = (await groupsOf(page)).find((g) => /^Kaikki osumat \(\d+\)$/.test(g.name));
+  check(
+    'matriisi: solmuvalitsin avaa koodin 43 (π-data, paluu tarinaverkosta näkyy)',
+    c43.crumbs.length === 6 &&
+      c43Last?.meta === 'π-data · valittu' &&
+      /^43\b/.test(c43.focus) &&
+      /Palaat tarinaverkosta piin todelliseen dataan\./.test(c43.banner) &&
+      !!c43All &&
+      c43All.rows.length > 0 &&
+      c43All.rows.every((r) => /^hit:43@\d+$/.test(r.key)),
+    `${c43.focus} · ${c43Last?.meta} · ${c43.banner.slice(0, 60)} · ${c43All?.name}`,
+  );
+  await layoutAt(page, 'koodi 43 (valittu)');
+  await edgeRowsAt(page, 'koodi 43 (valittu)');
+
+  // Koodi 629: ”Näytä kaikki (1 040)” piirtää rivit vaiheittain ja näyttää lopulta kaikki 1 040 riviä.
+  const errsBefore629 = errors.length;
+  await pick('629', 'code:629');
+  const all629 = async () =>
+    page.evaluate(() => {
+      const g = [...document.querySelectorAll('[data-testid="matrix-edges"] .mx-group')].find((x) =>
+        /^Kaikki osumat \(\d+\)$/.test((x.querySelector('.mx-group-name')?.textContent || '').trim()),
+      );
+      if (!g) return null;
+      const body = g.querySelector('.mx-group-body');
+      return {
+        name: g.querySelector('.mx-group-name').textContent.trim(),
+        rows: g.querySelectorAll('[data-testid="matrix-edge"]').length,
+        drawing: body?.getAttribute('data-drawing') === 'true',
+        progress: !!g.querySelector('[data-testid="matrix-edges-progress"]'),
+        showAll: [...g.querySelectorAll('button')].map((b) => b.textContent.replace(/\s+/g, ' ').trim()).find((t) => /^Näytä kaikki/.test(t)) || null,
+      };
+    });
+  const g629a = await all629();
+  const t629 = Date.now();
+  if (g629a?.showAll) {
+    await page
+      .locator('[data-testid="matrix-edges"] .mx-group', { has: page.locator('.mx-group-name', { hasText: /^Kaikki osumat \(1040\)$/ }) })
+      .locator('button', { hasText: /^Näytä kaikki/ })
+      .click();
+  }
+  await page.waitForFunction(
+    () => {
+      const g = [...document.querySelectorAll('[data-testid="matrix-edges"] .mx-group')].find((x) => /^Kaikki osumat/.test(x.textContent.trim()));
+      return g && !g.querySelector('[data-testid="matrix-edges-progress"]') && g.querySelectorAll('[data-testid="matrix-edge"]').length >= 1040;
+    },
+    null,
+    { timeout: 60000 },
+  ).catch(() => undefined);
+  const ms629 = Date.now() - t629;
+  const g629b = await all629();
+  check(
+    'matriisi: koodi 629 ”Näytä kaikki (1 040)” näyttää lopulta 1 040 riviä ilman konsolivirheitä',
+    g629a?.name === 'Kaikki osumat (1040)' &&
+      g629a.rows === 12 &&
+      /^Näytä kaikki \(1.040\)$/.test(g629a.showAll || '') &&
+      g629b?.rows === 1040 &&
+      !g629b.drawing &&
+      !g629b.progress &&
+      errors.length === errsBefore629,
+    `${g629a?.rows} → ${g629b?.rows} riviä ${ms629} ms · ${g629a?.showAll}`,
+  );
+  // Suunnan vaihto säilyttää näytettyjen rivien määrän (rivit piirretään uudelleen vaiheittain).
+  await page.click('[data-testid="matrix-dir-432"]');
+  await page.waitForFunction(
+    () => {
+      const g = [...document.querySelectorAll('[data-testid="matrix-edges"] .mx-group')].find((x) => /^Kaikki osumat/.test(x.textContent.trim()));
+      return g && !g.querySelector('[data-testid="matrix-edges-progress"]') && g.querySelectorAll('[data-testid="matrix-edge"]').length >= 1040;
+    },
+    null,
+    { timeout: 60000 },
+  ).catch(() => undefined);
+  const g629c = await all629();
+  await page.click('[data-testid="matrix-dir-234"]');
+  await page.waitForTimeout(300);
+  check(
+    'matriisi: suunnan vaihto 234 → 432 säilyttää näytetyt 1 040 riviä',
+    g629c?.rows === 1040 && !g629c.progress && errors.length === errsBefore629,
+    `432: ${g629c?.rows} riviä`,
+  );
+  await layoutAt(page, 'koodi 629 kaikki osumat');
+
+  // Tapahtumapaneelin ”Avaa matriisissa”: tapahtuma avautuu matriisiin valittuna solmuna (paneeli sulkeutuu).
+  const crumbsBeforeEvent = (await crumbsOf(page)).length;
+  await page.click('[data-testid="open-panel"]');
+  await page.click('.panel-head >> text=Tapahtumat');
+  await page.waitForSelector('[data-testid="event-open-matrix"]');
+  await page.click('[data-testid="event-open-matrix"]');
+  await page.waitForSelector('[data-testid="matrix-focus"]');
+  await page.waitForTimeout(300);
+  const evCrumbs = await crumbsOf(page);
+  const evFocus = await focusTitle(page);
+  const panelOpen = await page.isVisible('.panel-body');
+  check(
+    'matriisi: tapahtumapaneelin ”Avaa matriisissa” lisää tapahtuman polulle valittuna solmuna',
+    evCrumbs.length === crumbsBeforeEvent + 1 &&
+      evCrumbs[evCrumbs.length - 1].meta === 'Tarinaverkko · valittu' &&
+      /Testitapahtuma/.test(evFocus) &&
+      (await page.getAttribute('[data-testid="tab-matrix"]', 'aria-current')) === 'page' &&
+      !panelOpen,
+    `${crumbsBeforeEvent} → ${evCrumbs.length} murua · ${evFocus}`,
+  );
+  await layoutAt(page, 'tapahtuma (valittu)');
   page.off('request', onRequest);
 
   const badRows = edgeRowLog.filter((l) => l.issues.length);
@@ -780,6 +1161,26 @@ const check = (name, ok, extra = '') => {
   await at360('tarina');
   await p3.click('[data-testid="matrix-sub-loki"]');
   await at360('loki');
+  // Murun napautus alasivulla (Loki) sulkee alasivun ja näyttää fokuksen; sitten solmuvalitsin 360 px:ssä.
+  const nCrumbs360 = (await crumbsOf(p3)).length;
+  await p3.click(`[data-testid="matrix-crumb-${nCrumbs360 - 1}"]`);
+  await p3.waitForSelector('[data-testid="matrix-focus"]', { timeout: 5000 }).catch(() => undefined);
+  const crumbClosesSub = (await p3.isVisible('[data-testid="matrix-focus"]')) && !(await p3.isVisible('[data-testid="matrix-log"]'));
+  await p3.click('[data-testid="matrix-picker"] > summary');
+  await p3.fill('[data-testid="matrix-picker-input"]', '23');
+  await p3.waitForSelector('[data-testid="matrix-pick"][data-key="gloss:g-23"]');
+  await scrollTo(p3, '[data-testid="matrix-picker"]');
+  await at360('valitsin');
+  await p3.click('[data-testid="matrix-pick"][data-key="gloss:g-23"]');
+  await p3.waitForTimeout(300);
+  const meta360 = (await crumbsOf(p3)).map((c) => c.meta);
+  await scrollTop(p3);
+  await at360('valittu-tulkinta-23');
+  check(
+    'matriisi 360 px: murun napautus Loki-sivulla näyttää fokuksen, ja solmuvalitsin avaa tulkinnan 23',
+    crumbClosesSub && meta360.length === nCrumbs360 + 1 && meta360[meta360.length - 1] === 'Tarinaverkko · valittu',
+    `${nCrumbs360} → ${meta360.length} murua · ${meta360[meta360.length - 1]}`,
+  );
   const bad360 = log360.filter((l) => l.issues.length);
   check(
     `matriisi 360 px: ei vaakaylivuotoa, välilehdet mahtuvat (${log360.length} näkymää)`,

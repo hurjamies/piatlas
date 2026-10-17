@@ -62,8 +62,10 @@ tarinaverkkoon.”* Symbolinen yhteys ei ole matemaattinen todiste.
 1. Avaa alapalkista **Matriisi** (tai osoite `…/#matriisi`). Juuri on lähtöankkuri IDA 432 @858 511.
    Lähtötunnisteet tarkistetaan lähdeaineistosta: IDA @858 511 ✓, MATTI @858 260 ✓, MINI @858 960 ✓.
 2. Napauta yhteysriviä tai verkkokuvan solmua: se avautuu ja lisätään murupolkuun. Murua napauttamalla palaat
-   siihen, ja ankkuripainike vie juureen. Reitillä jo olevan solmun avaus palaa siihen (”↺ jo polulla”), joten
-   silmukoita ei synny.
+   siihen (myös Tarina-, Reitit- tai Loki-sivulta), ja ankkuripainike vie juureen. Reitillä jo olevan solmun
+   avaus palaa siihen (”↺ jo polulla”), joten silmukoita ei synny. **Valitse solmu** avaa minkä tahansa koodin,
+   nimen, henkilön, tulkinnan (esim. 23 tai 43), polun, tapahtuman tai π-indeksin (@n). Valinta lisätään
+   murupolun loppuun askeleena ”valittu käyttäjän toimesta”: se ei ole laskettu yhteys.
 3. **234 →** ja **← 432** vaihtavat lukusuuntaa. Selitysrivi kertoo, mitä suunta tarkoittaa tämän solmun
    alueissa (π-indeksi, koodi, spiraali, oktaedri, tarina, aika). Suunta ei ole hyppy.
 4. **369** on erillinen avausavain. Se ajaa kuusi menetelmää molempiin suuntiin ja näyttää myös tulokset
@@ -71,7 +73,9 @@ tarinaverkkoon.”* Symbolinen yhteys ei ole matemaattinen todiste.
 5. **Verkko** näyttää enintään 24 kohdetta kehällä, **Lista** pelkät yhteydet ryhmittäin. i-painike kertoo,
    miten yhteys laskettiin.
 6. Osumasolmun **Spiraali**, **3D**, **Atlas/verkko** ja **π-indeksi** avaavat saman osuman muissa
-   näkymissä. Alapaneelin **Matriisi**-painike tuo osuman takaisin (juuri → koodi → osuma).
+   näkymissä. Alapaneelin **Matriisi**-painike tuo osuman takaisin: tyhjällä polulla juuri → koodi → osuma,
+   muuten nykyinen polku säilyy (polulla oleva osuma palauttaa siihen, muu osuma lisätään loppuun askeleena
+   ”avattu osumasta”).
 7. **Tallenna reitti** tallentaa reitin, oman tulkinnan ja hypoteesin ajoituksen; reitin π-faktat tarkistetaan
    tallennettaessa. **Reitit**-sivulla reittitesti vertaa reitin lyhintä ikkunaa nollamalliin (R, siemen,
    valinnainen SHA-256-lukitus ennen ajoa). **Tarina**-sivulla muokataan henkilöitä, suhteita, tulkintoja ja
@@ -103,7 +107,7 @@ Vaatii Node.js 20+.
 ```bash
 npm install
 npm run dev            # kehityspalvelin (myös lähiverkkoon: --host)
-npm test               # Vitest: 219 yksikkötestiä, myös täydellä 1M-aineistolla
+npm test               # Vitest: 277 yksikkötestiä, myös täydellä 1M-aineistolla
 npm run build          # tavallinen tuotantoversio → dist/
 npm run build:pages    # GitHub Pages -versio → dist/ (offline-PWA)
 npm run build:artifact # yksi HTML-tiedosto + data/ → dist-artifact/
@@ -115,7 +119,7 @@ Päästä päähän -testi ja kuvakaappaukset (Playwright, ei projektin riippuvu
 ```bash
 npm run build && npx vite preview --port 4173 &
 npm i -D playwright && npx playwright install chromium   # kerran
-npm run e2e            # 52 tarkistusta puhelinkoossa (412 px, matriisi myös 360 px), kuvat → docs/screenshots/
+npm run e2e            # 66 tarkistusta puhelinkoossa (412 px, matriisi myös 360 px), kuvat → docs/screenshots/
 PI_ATLAS_NO_WORKER=1 npm run e2e   # sama ilman Web Workeria (varapolku)
 ```
 
@@ -169,12 +173,16 @@ Ilman globaalia asennusta: `NODE_PATH=$(npm root -g) node scripts/e2e.cjs`. Ymp�
   ja yhteyden tyypin. Kerrosvaihto näkyy erottimena, murupolun alarivillä ja ilmoituksena ”Siirryt piin
   todellisesta datasta symboliseen tarinaverkkoon”.
 - Lukusuunta 234 / 432 alueittain selitettynä, erillinen 369-avausavain ja erilliset nimetyt hyppysäännöt.
-- 2D-verkkokuva (enintään 24 kohdetta) ja kaikki yhteydet ryhmittäin sivutettuna listana.
+- 2D-verkkokuva (enintään 24 kohdetta) ja kaikki yhteydet ryhmittäin sivutettuna listana (”Näytä kaikki”
+  piirtää pitkät listat, esim. koodin 629 1 040 osumaa, vaiheittain).
+- Solmuvalitsin (koodi, nimi, henkilö, tulkinta, polku, tapahtuma, π-indeksi) ja ”Avaa matriisissa” Tarina-sivulta
+  ja tapahtumapaneelista; valinta näkyy murupolussa askeleena ”valittu käyttäjän toimesta”.
 - Ensimmäinen testireitti MAX (629) → 2 → HANNA → HANNA III, polkujen haarat ja samannimisten kronologia.
 - Tarinaeditori (henkilöt, suhteet, tulkinnat, polut, JSON-vienti ja -tuonti). Tarinatiedot tallentuvat vain
   laitteelle.
 - Reitin tallennus π-faktoineen (tarkistetaan lähdeaineistosta) ja reittitesti satunnaisvertailulla,
-  SHA-256-hypoteesilukitus, BH-q ja monivertailuvaroitus.
+  SHA-256-hypoteesilukitus (tällä laitteella; kattaa vain kysymyksen ensimmäisen ajon, ja tehtävänannon reitit
+  ovat aina ”löydön jälkeen”), BH-q ja monivertailuvaroitus kaikkien ajojen määrällä.
 - E2e-testi käy koko polun läpi puhelinkoossa (412 px) ja tarkistaa asettelun myös 360 px:n leveydellä.
 
 **Vielä suunnitelmaa**
@@ -216,8 +224,10 @@ valitaan yksi osuma (kaikki osumat mukana, ei ankkuria). R = 10 000, siemen 2026
 | 432 (pienenevä n) | 3 708 des. | 18 092 des. | 0,076 | Ei poikkeamaa |
 
 Kolme järjestystä on kolme testiä: riippumattomilla testeillä vähintään yksi p ≤ 0,05 syntyisi sattumalta
-noin 14 %:n todennäköisyydellä (1 − 0,95³). Reitti tuli tehtävänannosta aiempien löytöjen jälkeen, joten sen
-hypoteesin ajoitus on ”ei tiedossa”. Laskettu ydinkirjaston funktiolla `runRouteTest`
+noin 14 %:n todennäköisyydellä (1 − 0,95³). Reitti tuli tehtävänannosta, ja se muodostettiin aiemmin
+ilmoitettujen sijaintien ympärille (IDA @858 511 ilmoitettiin ennen tätä tutkimusta; HANNA @858 610, Δn +99,
+löytyi tässä tutkimuksessa). Siksi sen hypoteesin ajoitus on ”muodostettu löydön jälkeen”, eikä lukitus muuta
+sitä: kaikki kolme tulosta ovat eksploratiivisia. Laskettu ydinkirjaston funktiolla `runRouteTest`
 (`src/core/matrix/route-test.ts`) samoilla parametreilla kuin Reitit-sivulla.
 
 ## Hakemistorakenne

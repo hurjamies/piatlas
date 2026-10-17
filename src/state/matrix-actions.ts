@@ -3,6 +3,7 @@
 // muutoshistoriaan (audit 'matriisi'). Laskenta tehdään ydinkirjastolla (src/core/matrix); tässä ei ole omaa
 // matematiikkaa. Tarinatiedot tallentuvat vain laitteelle (persist.ts).
 
+import { describe, fmtIndex } from '../core/matrix/expand';
 import { codeHits } from '../core/matrix/hits';
 import { JUMP_DEFINITIONS, JumpOpId, runJump } from '../core/matrix/jumps';
 import { run369 } from '../core/matrix/ops369';
@@ -28,6 +29,7 @@ import type {
   MatrixEdge,
   MatrixEnv,
   MatrixLogKind,
+  NodeRef,
   Person,
   Relation,
   SavedRoute,
@@ -41,8 +43,10 @@ import { termEncoding } from '../core/types';
 import { getEngine } from '../engine/client';
 import { addTerm, audit, focusIndex, select, setMapMode, setTab, toast, updateEvent, updateTerm } from './actions';
 import {
+  addRunToIndex,
   canonicalRouteLock,
   evaluateRouteTiming,
+  lockForQuestion,
   LOG_MEMORY,
   matrixEnvOf,
   MatrixState,
@@ -51,12 +55,17 @@ import {
   NamedCode,
   RouteLock,
   RouteRunSummary,
+  RouteTestForm,
+  RouteTestUi,
   routeMathFacts,
+  sanitizeStory,
   savedRouteHypothesis,
   summarizeRouteRun,
+  taskDerivedReason,
   trailToHit,
   VISITED_MEMORY,
 } from './matrix';
+import { appendHitStep, appendSelected, danglingEventPersons, personLinkLabel } from './matrix-select';
 import { store } from './store';
 
 const nowIso = () => new Date().toISOString();
@@ -118,11 +127,15 @@ export function openEdge(edge: MatrixEdge, fromIndex?: number) {
   return r.result;
 }
 
+/** Murupolun muru: reitti katkaistaan siihen, ja alasivu (Tarina, Reitit, Loki) suljetaan, jotta fokus näkyy. */
 export function jumpToCrumb(i: number) {
   const m = store.get().matrix;
-  if (i === m.trail.length - 1) return;
+  if (i === m.trail.length - 1) {
+    if (m.sub !== null) setM({ sub: null });
+    return;
+  }
   const trail = truncateTo(m.trail, i);
-  setM({ trail });
+  setM({ trail, sub: null });
   const key = nodeKey(trail[trail.length - 1].ref);
   mlog('avaus', `Murupolku: palattiin askeleeseen ${i} (${key}).`, key);
 }
@@ -190,7 +203,8 @@ export function saveRoute(opts: { title: string; interpretation: string; timing:
   const m = s.matrix;
   const ts = nowIso();
   const lock = opts.lockId ? m.locks.find((l) => l.id === opts.lockId) ?? null : null;
-  const { meta, downgraded } = savedRouteHypothesis(opts.timing, lock, m.routeRuns, ts);
+  // Lukituksen on koskettava juuri tämän reitin koodeja ja edellettävä reitin π-solmujen avaamista (lockFitsRoute).
+  const { meta, downgraded } = savedRouteHypothesis(opts.timing, lock, m.runIndex, ts, { trail: m.trail, story: m.story, log: m.log });
   const mathFacts = routeMathFacts(m.trail, s.digits, s.anchor, m.story);
   const route: SavedRoute = {
     id: newId('reitti'),
@@ -235,13 +249,25 @@ export function openRoute(id: string) {
 
 // ------------------------------------------------------------------ hypoteesin lukitus ja reittitesti
 
-export async function lockRouteHypothesis(text: string, codes: NamedCode[], order: RouteOrder): Promise<RouteLock> {
+/**
+ * Lukitsee reittihypoteesin (SHA-256, tämän laitteen kirjaus). `taskSource` = tehtävänannon lähteen nimi, jos koodit
+ * valittiin tehtävänannon reitistä tai polusta: silloin ajoitus on aina 'löydön-jälkeen'.
+ */
+export async function lockRouteHypothesis(text: string, codes: NamedCode[], order: RouteOrder, taskSource: string | null = null): Promise<RouteLock> {
   const s = store.get();
   const createdAt = nowIso();
   const datasetSha = s.dataset.info?.sha256 ?? null;
   const cs = codes.map((c) => c.code);
   const hash = await sha256Hex(canonicalRouteLock(text, cs, order, datasetSha, createdAt));
-  const v = evaluateRouteTiming({ codes: cs, order, datasetSha, createdAt, hash }, store.get().matrix.routeRuns, cs, order, datasetSha);
+  const m = store.get().matrix;
+  const v = evaluateRouteTiming(
+    { codes: cs, order, datasetSha, createdAt, hash },
+    m.runIndex,
+    cs,
+    order,
+    datasetSha,
+    taskDerivedReason(cs, m.story, taskSource),
+  );
   const lock: RouteLock = {
     id: newId('lukitus'),
     createdAt,
@@ -265,58 +291,106 @@ export async function lockRouteHypothesis(text: string, codes: NamedCode[], orde
   return lock;
 }
 
+function setRT(patch: Partial<RouteTestUi> | ((rt: RouteTestUi) => Partial<RouteTestUi>)) {
+  setM((m) => ({ routeTest: { ...m.routeTest, ...(typeof patch === 'function' ? patch(m.routeTest) : patch) } }));
+}
+
+/** Reittitestin lomakkeen muutos (store: säilyy, kun Reitit-sivulta poistutaan ja palataan). */
+export function setRouteForm(patch: Partial<RouteTestForm>) {
+  setRT((rt) => ({ form: { ...rt.form, ...patch } }));
+}
+
+export const selectRouteRun = (id: string | null) => setRT({ selected: id });
+export const setRouteTestError = (error: string | null) => setRT({ error });
+
+/**
+ * Ajaa reittitestin. Ajon tila (eteneminen, parametrit, virhe, viimeisin tulos) pidetään storessa, joten se näkyy
+ * myös, kun Reitit-sivulle palataan kesken ajon. Vain yksi ajo kerrallaan: toinen pyyntö hylätään.
+ * Ajoitus arvioidaan ennen ajoa ajohakemistosta (runIndex); lukitus haetaan kysymyksen kanonisella avaimella.
+ * `taskSource` = tehtävänannon lähteen nimi, jos koodit valittiin tehtävänannon reitistä tai polusta.
+ * Palauttaa null, jos ajo ei käynnistynyt tai epäonnistui (syy: routeTest.error).
+ */
 export async function runRouteTest(
-  opts: { codes: NamedCode[]; order: RouteOrder; R: number; seedText: string; randomStrings: number; lockId: string | null },
-  onProgress: (done: number, total: number) => void,
-): Promise<{ result: RouteTestResult; summary: RouteRunSummary }> {
+  opts: { codes: NamedCode[]; order: RouteOrder; R: number; seedText: string; randomStrings: number; taskSource?: string | null },
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ result: RouteTestResult; summary: RouteRunSummary } | null> {
   const s = store.get();
-  const digits = s.digits;
-  if (!digits) throw new Error('Aineistoa ei ole ladattu.');
-  if (opts.codes.length < 2) throw new Error('Reittitesti vaatii vähintään kaksi koodia.');
-  const codes = opts.codes.map((c) => c.code);
-  const hits = codes.map((c) => Array.from(codeHits(digits, c)));
-  const empty = opts.codes.filter((_, i) => !hits[i].length);
-  if (empty.length) throw new Error(`Koodilla ${empty.map((c) => `${c.name} ${c.code}`).join(', ')} ei ole osumia aineistossa.`);
-  const datasetSha = s.dataset.info?.sha256 ?? null;
-  const lock = opts.lockId ? s.matrix.locks.find((l) => l.id === opts.lockId) ?? null : null;
-  // Ajoitus arvioidaan ennen ajoa: vain aiemmat ajot ratkaisevat.
-  const timing = evaluateRouteTiming(lock, s.matrix.routeRuns, codes, opts.order, datasetSha);
-  const seed = seedFrom(opts.seedText);
-  const result = await getEngine().call(
-    {
-      type: 'routeTest',
-      params: {
-        codes,
-        hits,
-        lens: codes.map((c) => c.length),
-        N: digits.length,
-        R: opts.R,
-        seed,
-        order: opts.order,
-        randomStrings: opts.randomStrings,
+  if (s.matrix.routeTest.running) {
+    setRT({ error: 'Reittitesti on jo käynnissä. Odota sen valmistumista tai keskeytä se ensin.' });
+    return null;
+  }
+  const label =
+    `${opts.codes.map((c) => c.name).join(' → ')} (${opts.order}), R = ${opts.R}, siemen ”${opts.seedText}”` +
+    `${opts.randomStrings ? `, ${opts.randomStrings} satunnaisjonoa` : ''}`;
+  setRT({ error: null, running: { done: 0, total: opts.R + opts.randomStrings, startedAt: nowIso(), label } });
+  try {
+    const digits = s.digits;
+    if (!digits) throw new Error('Aineistoa ei ole ladattu.');
+    if (opts.codes.length < 2) throw new Error('Reittitesti vaatii vähintään kaksi koodia.');
+    const codes = opts.codes.map((c) => c.code);
+    const hits = codes.map((c) => Array.from(codeHits(digits, c)));
+    const empty = opts.codes.filter((_, i) => !hits[i].length);
+    if (empty.length) throw new Error(`Koodilla ${empty.map((c) => `${c.name} ${c.code}`).join(', ')} ei ole osumia aineistossa.`);
+    const datasetSha = s.dataset.info?.sha256 ?? null;
+    const lock = lockForQuestion(s.matrix.locks, codes, opts.order, datasetSha);
+    // Ajoitus arvioidaan ennen ajoa: vain aiemmat ajot (kaikki järjestysvariantit) ratkaisevat.
+    const timing = evaluateRouteTiming(
+      lock,
+      s.matrix.runIndex,
+      codes,
+      opts.order,
+      datasetSha,
+      taskDerivedReason(codes, s.matrix.story, opts.taskSource ?? null),
+    );
+    const seed = seedFrom(opts.seedText);
+    const result = await getEngine().call(
+      {
+        type: 'routeTest',
+        params: {
+          codes,
+          hits,
+          lens: codes.map((c) => c.length),
+          N: digits.length,
+          R: opts.R,
+          seed,
+          order: opts.order,
+          randomStrings: opts.randomStrings,
+        },
       },
-    },
-    onProgress,
-  );
-  const summary = summarizeRouteRun(result, {
-    id: newId('reittitesti'),
-    ts: nowIso(),
-    names: opts.codes.map((c) => c.name),
-    seedText: opts.seedText,
-    datasetSha,
-    digits,
-    timing,
-    lock,
-  });
-  setM((m) => ({ routeRuns: [...m.routeRuns, summary] }));
-  mlog(
-    'vertailu',
-    `Reittitesti ${opts.codes.map((c) => `${c.name} ${c.code}`).join(' → ')} (${opts.order}), R=${opts.R}, siemen ${seed}` +
-      `${opts.randomStrings ? `, ${opts.randomStrings} satunnaisjonoa` : ''}: lyhin ikkuna ${summary.span ?? '∞'}, p=${summary.pValue.toPrecision(3)} (${timing.timing}).`,
-    undefined,
-    true,
-  );
-  return { result, summary };
+      (done, total) => {
+        setRT((rt) => (rt.running ? { running: { ...rt.running, done, total } } : {}));
+        onProgress?.(done, total);
+      },
+    );
+    const summary = summarizeRouteRun(result, {
+      id: newId('reittitesti'),
+      ts: nowIso(),
+      names: opts.codes.map((c) => c.name),
+      seedText: opts.seedText,
+      datasetSha,
+      digits,
+      timing,
+      lock,
+    });
+    setM((m) => ({
+      routeRuns: [...m.routeRuns, summary],
+      runIndex: addRunToIndex(m.runIndex, summary),
+      routeTest: { ...m.routeTest, last: { id: summary.id, nullValues: result.nullValues }, selected: summary.id },
+    }));
+    mlog(
+      'vertailu',
+      `Reittitesti ${opts.codes.map((c) => `${c.name} ${c.code}`).join(' → ')} (${opts.order}), R=${opts.R}, siemen ${seed}` +
+        `${opts.randomStrings ? `, ${opts.randomStrings} satunnaisjonoa` : ''}: lyhin ikkuna ${summary.span ?? '∞'}, p=${summary.pValue.toPrecision(3)} (${timing.timing}).`,
+      undefined,
+      true,
+    );
+    return { result, summary };
+  } catch (e) {
+    setRT({ error: e instanceof Error ? e.message : String(e) });
+    return null;
+  } finally {
+    setRT({ running: null });
+  }
 }
 
 // ------------------------------------------------------------------ hakutermit ja muut näkymät
@@ -394,15 +468,70 @@ export function openMatrixAtHit(termId: string, n: number) {
     toast('Kokeellinen hyppypolku ei ole peräkkäinen osuma, joten sitä ei avata matriisissa.');
     return;
   }
-  const { trail, direct } = trailToHit(matrixEnv(), code, n, t.label);
-  setM({ trail, sub: null });
-  visit(trailKeys(trail));
-  mlog(
-    'avaus',
-    `Avattiin osumasta ${t.label} ${code} @${n}${direct ? ' (juuri → koodi → osuma)' : ' (koodiin ei ole juuren särmää, askel merkitty)'}.`,
-    nodeKey(trail[trail.length - 1].ref),
-  );
+  const env = matrixEnv();
+  const cur = store.get().matrix.trail;
+  const key = nodeKey({ kind: 'hit', code, n });
   setTab('matrix');
+  // Pelkkä juuri: juuri → koodi → osuma. Muuten nykyinen polku säilyy: polulla oleva osuma katkaisee polun siihen,
+  // ja muu osuma lisätään polun loppuun näkyvänä "avattu osumasta" -askeleena (ei laskettu yhteys).
+  if (cur.length <= 1) {
+    const { trail, direct } = trailToHit(env, code, n, t.label);
+    setM({ trail, sub: null });
+    visit(trailKeys(trail));
+    mlog(
+      'avaus',
+      `Avattiin osumasta ${t.label} ${code} @${n}${direct ? ' (juuri → koodi → osuma)' : ' (koodiin ei ole juuren särmää, askel merkitty)'}.`,
+      key,
+    );
+    return;
+  }
+  const r = appendHitStep(cur, env.digits, code, n, t.label);
+  if (r.result === 'syvyysraja') {
+    setM({ sub: null });
+    toast(`Syvyysraja ${MAX_DEPTH} solmua: osumaa ${code} @${fmtIndex(n)} ei lisätty polulle. Palaa murupolussa taaksepäin ja avaa osuma uudelleen.`);
+    mlog('avaus', `Syvyysraja ${MAX_DEPTH}: osuma ${key} (${t.label}) jäi avaamatta.`, key);
+    return;
+  }
+  setM({ trail: r.trail, sub: null });
+  visit([key]);
+  if (r.result === 'palattu') {
+    toast(`Osuma ${code} @${fmtIndex(n)} on jo polulla: palattiin siihen.`);
+    mlog('avaus', `↺ Osuma ${t.label} ${code} @${n} oli jo polulla: palattiin askeleeseen ${r.trail.length - 1}.`, key);
+  } else {
+    toast(`Osuma ${code} @${fmtIndex(n)} lisättiin polun loppuun (avattu osumasta). Aiempi polku säilyi.`);
+    mlog('avaus', `Avattiin osumasta ${t.label} ${code} @${n}: lisättiin polun loppuun askeleena "avattu osumasta" (ei laskettu yhteys).`, key);
+  }
+}
+
+/**
+ * Käyttäjän valitsema solmu (solmuvalitsin, Tarina-sivu, tapahtumapaneeli) matriisin fokukseksi. Solmu lisätään
+ * nykyisen polun loppuun näkyvänä "valittu käyttäjän toimesta" -askeleena; askel ei ole laskettu yhteys. Polulla jo
+ * oleva solmu katkaisee polun siihen. Avaa Matriisi-välilehden ja sulkee alasivun.
+ */
+export function openSelectedNode(ref: NodeRef, source: string) {
+  const env = matrixEnv();
+  const m = store.get().matrix;
+  const title = describe(ref, env).title;
+  const key = nodeKey(ref);
+  const r = appendSelected(m.trail, ref, title, source);
+  setTab('matrix');
+  if (r.result === 'syvyysraja') {
+    setM({ sub: null });
+    toast(`Syvyysraja ${MAX_DEPTH} solmua saavutettu. Palaa murupolussa taaksepäin ennen uutta avausta.`);
+    mlog('avaus', `Syvyysraja ${MAX_DEPTH}: valittu solmu ${key} jäi avaamatta.`, key);
+    return r.result;
+  }
+  setM({ trail: r.trail, sub: null });
+  visit([key]);
+  if (r.result === 'palattu') {
+    toast('Solmu on jo polulla: palattiin siihen.');
+    mlog('avaus', `↺ Valittu solmu ${key} (${source}) oli jo polulla: palattiin askeleeseen ${r.trail.length - 1}.`, key);
+  } else {
+    const via = r.trail[r.trail.length - 1].via;
+    const crossing = via?.crossesRealm ? `; siirtymä ${REALM_LABELS[realmOf(focusRef(m))]} → ${REALM_LABELS[realmOf(ref)]}` : '';
+    mlog('avaus', `Valittu käyttäjän toimesta (${source}): ${key} ${title}${crossing}. Ei laskettu yhteys.`, key);
+  }
+  return r.result;
 }
 
 /** Osuma (esim. reittitestin valinta) matriisin fokukseksi: juuri → koodi → osuma. Pysyy Matriisi-välilehdellä. */
@@ -478,7 +607,17 @@ export function deletePath(id: string): string | null {
   return null;
 }
 
-export function importStory(next: StoryModel, sourceName: string) {
+/**
+ * Korvaa tarinan tuodulla. `precheck` = tuontiraportin huomautukset (Tarina-sivun sanitizeStory), jotka kirjataan
+ * lokiin; tarkistus ajetaan tässä uudelleen, joten myös suoraan kutsuttu tuonti tarkistetaan.
+ */
+export function importStory(next0: StoryModel, sourceName: string, precheck: readonly string[] = []) {
+  // Ajoitusväitteet tarkistetaan tämän laitteen lukituksia vasten myös tässä (tuontiraportin lisäksi):
+  // 'ennen-löydöstä' ilman vastaavaa lukitusta → 'ei-tiedossa', tehtävänannon polku → 'löydön-jälkeen'.
+  const checked = sanitizeStory(next0, store.get().matrix.locks);
+  const next = checked.story ? { ...next0, paths: checked.story.paths } : next0;
+  for (const d of new Set([...precheck, ...checked.dropped])) mlog('tarkistus', `Tarinan tuonti (${sourceName}): ${d}`);
+  dropDanglingEventPersons(next, `Tarinan tuonti (${sourceName})`);
   commitStory(
     next,
     `Tarina tuotiin (${sourceName}): ${next.persons.length} henkilöä, ${next.paths.length} polkua, ${next.glosses.length} tulkintaa, ${next.relations.length} suhdetta.`,
@@ -486,8 +625,26 @@ export function importStory(next: StoryModel, sourceName: string) {
   setM({ trail: rootTrail(), last369: null, lastJump: null });
 }
 
+/**
+ * Ennen tarinan korvaamista: tapahtumien henkilölinkit, joiden henkilöä ei ole uudessa tarinassa, poistetaan
+ * (käyttäjä on vahvistanut listan Tarina-sivulla). Jokainen poisto kirjataan muutoshistoriaan.
+ */
+function dropDanglingEventPersons(next: StoryModel, reason: string) {
+  const prev = story();
+  for (const d of danglingEventPersons(store.get().events, next)) {
+    const e = store.get().events.find((x) => x.id === d.eventId);
+    if (!e) continue;
+    const gone = new Set(d.personIds);
+    updateEvent(e.id, { personIds: (e.personIds ?? []).filter((id) => !gone.has(id)) });
+    const labels = d.personIds.map((id) => personLinkLabel(prev, id)).join(', ');
+    audit('tapahtuma', `${reason}: poistettu henkilölinkit ${labels} tapahtumasta "${e.title}", koska henkilöitä ei ole uudessa tarinassa`);
+    mlog('tarina', `${reason}: tapahtumasta "${e.title}" poistettiin henkilölinkit ${labels} (ei uudessa tarinassa).`, `event:${e.id}`);
+  }
+}
+
 export function resetStoryToSeed() {
   const seed = createSeedStory();
+  dropDanglingEventPersons(seed, 'Siemendatan palautus');
   commitStory(seed, `Tarina palautettiin testitapauksen siemendataan (${seed.seedVersion}).`);
   setM({ trail: rootTrail(), last369: null, lastJump: null });
   toast('Testitapauksen siemendata palautettu.');

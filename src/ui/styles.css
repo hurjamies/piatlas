@@ -2441,7 +2441,9 @@ svg.chart .grid {
 }
 .mx-json {
   min-height: 160px;
-  font-size: 12px !important;
+  /* Vähintään 16 px: iOS Safari zoomaa sivun, jos kentän fontti on pienempi. */
+  font-size: 16px;
+  line-height: 1.35;
 }
 
 /* ---- tapahtumapaneelin henkilölinkit */
@@ -2459,6 +2461,106 @@ svg.chart .grid {
 }
 .ev-person[aria-pressed='true'] .dot {
   background: var(--rose);
+}
+/* Linkki henkilöön, jota tarinassa ei enää ole: poistettava merkki. */
+.ev-person.ev-person-gone {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--amber) 60%, var(--line-2));
+  color: var(--fg-2);
+}
+.ev-person.ev-person-gone .dot {
+  background: var(--amber);
+}
+
+/* ---- solmuvalitsin */
+.mx-picker {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+  padding: 0 12px;
+  min-width: 0;
+}
+.mx-picker > summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.mx-picker-head {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mx-picker > summary::-webkit-details-marker {
+  display: none;
+}
+.mx-picker > summary::after {
+  content: '+';
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--fg-3);
+}
+.mx-picker[open] > summary::after {
+  content: '–';
+}
+.mx-picker-title {
+  font-weight: 600;
+  font-size: var(--t-sm);
+}
+.mx-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.mx-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mx-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+  min-width: 0;
+}
+.mx-pick:active {
+  background: var(--bg-3);
+}
+.mx-pick-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mx-pick-title {
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+}
+.mx-pick-hint {
+  font-size: 11.5px;
+  color: var(--fg-3);
+  overflow-wrap: anywhere;
+}
+.mx-edges-progress {
+  padding: 6px 4px;
 }
 
 @media (max-width: 370px) {

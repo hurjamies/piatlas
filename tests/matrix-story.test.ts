@@ -10,6 +10,7 @@ import {
   glossContextLabel,
   glossesFor,
   homonymChronology,
+  homonymOrdinalConflict,
   junction,
   leadingSteps,
   pathsOfName,
@@ -28,6 +29,7 @@ import {
   upsertPerson,
   upsertRelation,
   validateStory,
+  validateStoryWarnings,
   verifyIdentifiers,
 } from '../src/core/matrix/story';
 import type { Gloss, MatrixEvent, Person, StoryModel, StoryPath } from '../src/core/matrix/types';
@@ -116,8 +118,9 @@ describe('siemendata ja samannimiset henkilöt', () => {
     const c = homonymChronology(m, 'HANNA');
     expect(c.basis).toBe('järjestysnumero');
     expect(c.persons.map((p) => p.id)).toEqual(['hanna-1', 'hanna-2', 'hanna-3']);
+    expect(c.conflict).toBeNull();
     expect(homonymChronology(m, 'MAX').basis).toBe('yksi');
-    expect(homonymChronology(m, 'MINI')).toEqual({ persons: [], basis: 'yksi' });
+    expect(homonymChronology(m, 'MINI')).toEqual({ persons: [], basis: 'yksi', conflict: null });
   });
 
   it('homonymChronology: ajanjakso vain, jos jokaisella on alkupäivä', () => {
@@ -137,11 +140,66 @@ describe('siemendata ja samannimiset henkilöt', () => {
     const c = homonymChronology(withPeriods, 'HANNA');
     expect(c.basis).toBe('ajanjakso');
     expect(c.persons.map((p) => p.id)).toEqual(['hanna-2', 'hanna-1', 'hanna-3']);
+    // HANNA I (1980) alkaa myöhemmin kuin HANNA II (1960): ristiriita näytetään, numeroita ei muuteta.
+    expect(c.conflict).toMatch(/^Nimi HANNA: järjestysnumerot/);
+    expect(ordinals(withPeriods, ['hanna-1', 'hanna-2', 'hanna-3'])).toEqual([1, 2, 3]);
     const partial: StoryModel = {
       ...withPeriods,
       persons: withPeriods.persons.map((p) => (p.id === 'hanna-2' ? { ...p, period: { start: null, end: '1970-01-01' } } : p)),
     };
     expect(homonymChronology(partial, 'HANNA').basis).toBe('järjestysnumero');
+    expect(homonymChronology(partial, 'HANNA').conflict).toBeNull();
+  });
+});
+
+describe('järjestysnumerot vs. ajanjaksot (ei hiljaista uudelleennumerointia)', () => {
+  const withStarts = (m: StoryModel, starts: Record<string, string | null>): StoryModel => {
+    let out = m;
+    for (const [id, start] of Object.entries(starts)) out = upsertPerson(out, { ...getPerson(out, id)!, period: { start, end: null } });
+    return out;
+  };
+
+  it('ristiriita: varoitus validateStoryWarningsissa ja kronologiassa, validateStory pysyy virheettömänä', () => {
+    const m = withStarts(frozenSeed(), { 'hanna-1': '2015-01-01', 'hanna-2': '2010-01-01', 'hanna-3': '2001-01-01' });
+    // upsertPerson ei numeroi päivämäärien mukaan: I/II/III säilyvät.
+    expect(ordinals(m, ['hanna-1', 'hanna-2', 'hanna-3'])).toEqual([1, 2, 3]);
+    expect(validateStory(m)).toEqual([]);
+    const w = validateStoryWarnings(m);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toBe(
+      'Nimi HANNA: järjestysnumerot (HANNA I → HANNA II → HANNA III) ovat eri järjestyksessä kuin ajanjaksojen alkupäivät ' +
+        '(HANNA III 2001-01-01 → HANNA II 2010-01-01 → HANNA I 2015-01-01). Järjestysnumero tarkoittaa samannimisten ' +
+        'kronologista järjestystä: tarkista numerot tai päivämäärät. Numeroita ei muuteta automaattisesti.',
+    );
+    const c = homonymChronology(m, 'hanna');
+    expect(c.basis).toBe('ajanjakso');
+    expect(c.persons.map((p) => p.id)).toEqual(['hanna-3', 'hanna-2', 'hanna-1']);
+    expect(c.conflict).toBe(w[0]);
+    expect(homonymOrdinalConflict(m, 'HANNA')).toBe(w[0]);
+    // Osittainen ristiriita (finding: 2012 / 2008 / 2015 → II → I → III) havaitaan myös.
+    const m2 = withStarts(frozenSeed(), { 'hanna-1': '2012-01-01', 'hanna-2': '2008-01-01', 'hanna-3': '2015-01-01' });
+    expect(validateStoryWarnings(m2)).toHaveLength(1);
+    expect(homonymChronology(m2, 'HANNA').persons.map((p) => personLabel(m2, p))).toEqual(['HANNA II', 'HANNA I', 'HANNA III']);
+  });
+
+  it('ei varoitusta: yhtäpitävät tai samat alkupäivät, puuttuva alkupäivä, siemen', () => {
+    expect(validateStoryWarnings(createSeedStory())).toEqual([]);
+    const ok = withStarts(frozenSeed(), { 'hanna-1': '1990-01-01', 'hanna-2': '2000-01-01', 'hanna-3': '2010-01-01' });
+    expect(validateStoryWarnings(ok)).toEqual([]);
+    expect(homonymChronology(ok, 'HANNA')).toMatchObject({ basis: 'ajanjakso', conflict: null });
+    const same = withStarts(frozenSeed(), { 'hanna-1': '2000-01-01', 'hanna-2': '2000-01-01', 'hanna-3': '2000-01-01' });
+    expect(validateStoryWarnings(same)).toEqual([]);
+    const partial = withStarts(frozenSeed(), { 'hanna-1': '2015-01-01', 'hanna-2': '2010-01-01', 'hanna-3': null });
+    expect(validateStoryWarnings(partial)).toEqual([]);
+    expect(homonymChronology(partial, 'HANNA').conflict).toBeNull();
+  });
+
+  it('käyttäjä voi korjata ristiriidan siirtämällä henkilön: varoitus poistuu', () => {
+    let m = withStarts(frozenSeed(), { 'hanna-1': '2015-01-01', 'hanna-2': '2010-01-01', 'hanna-3': '2001-01-01' });
+    m = upsertPerson(m, { ...getPerson(m, 'hanna-1')!, homonymOrdinal: 3 });
+    m = upsertPerson(m, { ...getPerson(m, 'hanna-3')!, homonymOrdinal: 1 });
+    expect(personsByName(m, 'HANNA').map((p) => p.id)).toEqual(['hanna-3', 'hanna-2', 'hanna-1']);
+    expect(validateStoryWarnings(m)).toEqual([]);
   });
 });
 
@@ -380,6 +438,53 @@ describe('järjestysnumeroiden uudelleennumerointi', () => {
     expect(ordinals(m2, ['hanna-0', 'hanna-1', 'hanna-2', 'hanna-3'])).toEqual([1, 2, 3, 4]);
     const m3 = upsertPerson(m2, { ...getPerson(m2, 'hanna-3')!, homonymOrdinal: 2 });
     expect(ordinals(m3, ['hanna-0', 'hanna-3', 'hanna-1', 'hanna-2'])).toEqual([1, 2, 3, 4]);
+  });
+
+  it('siirto myöhempään kohtaan: HANNA I → 3, HANNA II → 3, HANNA I → 2', () => {
+    const m = frozenSeed();
+    const order = (x: StoryModel) => personsByName(x, 'HANNA').map((p) => [p.id, p.homonymOrdinal]);
+    expect(order(upsertPerson(m, { ...getPerson(m, 'hanna-1')!, homonymOrdinal: 3 }))).toEqual([
+      ['hanna-2', 1],
+      ['hanna-3', 2],
+      ['hanna-1', 3],
+    ]);
+    expect(order(upsertPerson(m, { ...getPerson(m, 'hanna-2')!, homonymOrdinal: 3 }))).toEqual([
+      ['hanna-1', 1],
+      ['hanna-3', 2],
+      ['hanna-2', 3],
+    ]);
+    const m2 = upsertPerson(m, { ...getPerson(m, 'hanna-1')!, homonymOrdinal: 2 });
+    expect(order(m2)).toEqual([
+      ['hanna-2', 1],
+      ['hanna-1', 2],
+      ['hanna-3', 3],
+    ]);
+    expect(personLabel(m2, 'hanna-1')).toBe('HANNA II');
+    expect(validateStory(m2)).toEqual([]);
+  });
+
+  it('siirto aiempaan kohtaan ja rajaus: HANNA III → 1, yli ryhmän koon → viimeiseksi, 0 → ensimmäiseksi', () => {
+    const m = frozenSeed();
+    const ids = (x: StoryModel) => personsByName(x, 'HANNA').map((p) => p.id);
+    expect(ids(upsertPerson(m, { ...getPerson(m, 'hanna-3')!, homonymOrdinal: 1 }))).toEqual(['hanna-3', 'hanna-1', 'hanna-2']);
+    expect(ids(upsertPerson(m, { ...getPerson(m, 'hanna-3')!, homonymOrdinal: 2 }))).toEqual(['hanna-1', 'hanna-3', 'hanna-2']);
+    const far = upsertPerson(m, { ...getPerson(m, 'hanna-1')!, homonymOrdinal: 10 });
+    expect(ids(far)).toEqual(['hanna-2', 'hanna-3', 'hanna-1']);
+    expect(ordinals(far, ['hanna-2', 'hanna-3', 'hanna-1'])).toEqual([1, 2, 3]);
+    expect(ids(upsertPerson(m, { ...getPerson(m, 'hanna-2')!, homonymOrdinal: 0 }))).toEqual(['hanna-2', 'hanna-1', 'hanna-3']);
+    // Sama numero kuin ennen: ei muutosta.
+    expect(upsertPerson(m, { ...getPerson(m, 'hanna-2')! }).persons).toEqual(m.persons);
+  });
+
+  it('viisi samannimistä: HANNA II → 4 siirtyy neljänneksi (ennen jäi kolmanneksi)', () => {
+    let m: StoryModel = frozenSeed();
+    m = upsertPerson(m, newPerson('hanna-4', 'HANNA', { createdAt: '2026-10-17T00:00:00Z' }));
+    m = upsertPerson(m, newPerson('hanna-5', 'HANNA', { createdAt: '2026-10-18T00:00:00Z' }));
+    expect(personsByName(m, 'HANNA').map((p) => personLabel(m, p))).toEqual(['HANNA I', 'HANNA II', 'HANNA III', 'HANNA IV', 'HANNA V']);
+    const m2 = upsertPerson(m, { ...getPerson(m, 'hanna-2')!, homonymOrdinal: 4 });
+    expect(personsByName(m2, 'HANNA').map((p) => p.id)).toEqual(['hanna-1', 'hanna-3', 'hanna-4', 'hanna-2', 'hanna-5']);
+    expect(personLabel(m2, 'hanna-2')).toBe('HANNA IV');
+    expect(assignHomonymOrdinals(m2, 'HANNA', 'hanna-2').persons).toEqual(m2.persons);
   });
 
   it('nimen vaihto numeroi sekä vanhan että uuden nimiryhmän', () => {

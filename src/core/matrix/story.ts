@@ -77,17 +77,49 @@ export const CHRONOLOGY_LABELS: Record<ChronologyBasis, string> = {
 };
 
 /**
- * Samannimisten kronologia. Peruste 'ajanjakso' vain, jos jokaisella on period.start; muuten järjestysnumerot.
- * 'yksi', kun henkilöitä on enintään yksi.
+ * Ristiriita samannimisten järjestysnumeroiden ja ajanjaksojen välillä. Tarkistetaan vain, kun jokaisella
+ * samannimisellä on sekä järjestysnumero että period.start. Ristiriita = jokin pari, jossa pienempi järjestysnumero
+ * alkaa myöhemmin (sama alkupäivä ei ole ristiriita). Palauttaa varoitustekstin tai null. Numeroita ei muuteta.
  */
-export function homonymChronology(model: StoryModel, name: string): { persons: Person[]; basis: ChronologyBasis } {
+export function homonymOrdinalConflict(model: StoryModel, name: string): string | null {
   const persons = personsByName(model, name);
-  if (persons.length <= 1) return { persons, basis: 'yksi' };
+  if (persons.length < 2) return null;
+  if (!persons.every((p) => p.homonymOrdinal != null && !!p.period?.start)) return null;
+  const byOrd = [...persons].sort((a, b) => a.homonymOrdinal! - b.homonymOrdinal!);
+  let conflict = false;
+  for (let i = 0; i < byOrd.length && !conflict; i++)
+    for (let j = i + 1; j < byOrd.length; j++)
+      if (byOrd[i].homonymOrdinal! < byOrd[j].homonymOrdinal! && byOrd[i].period!.start! > byOrd[j].period!.start!) {
+        conflict = true;
+        break;
+      }
+  if (!conflict) return null;
+  const byStart = [...persons].sort((a, b) => cmpStr(a.period!.start, b.period!.start) || comparePersons(a, b));
+  const key = normName(name);
+  return (
+    `Nimi ${key}: järjestysnumerot (${byOrd.map((p) => personLabel(model, p)).join(' → ')}) ovat eri järjestyksessä kuin ` +
+    `ajanjaksojen alkupäivät (${byStart.map((p) => `${personLabel(model, p)} ${p.period!.start}`).join(' → ')}). ` +
+    'Järjestysnumero tarkoittaa samannimisten kronologista järjestystä: tarkista numerot tai päivämäärät. Numeroita ei muuteta automaattisesti.'
+  );
+}
+
+/**
+ * Samannimisten kronologia. Peruste 'ajanjakso' vain, jos jokaisella on period.start; muuten järjestysnumerot.
+ * 'yksi', kun henkilöitä on enintään yksi. `conflict`: varoitus, jos järjestysnumerot ja ajanjaksot ovat
+ * ristiriidassa (homonymOrdinalConflict), muuten null.
+ */
+export function homonymChronology(
+  model: StoryModel,
+  name: string,
+): { persons: Person[]; basis: ChronologyBasis; conflict: string | null } {
+  const persons = personsByName(model, name);
+  if (persons.length <= 1) return { persons, basis: 'yksi', conflict: null };
+  const conflict = homonymOrdinalConflict(model, name);
   if (persons.every((p) => !!p.period?.start)) {
     const sorted = [...persons].sort((a, b) => cmpStr(a.period!.start, b.period!.start) || comparePersons(a, b));
-    return { persons: sorted, basis: 'ajanjakso' };
+    return { persons: sorted, basis: 'ajanjakso', conflict };
   }
-  return { persons, basis: 'järjestysnumero' };
+  return { persons, basis: 'järjestysnumero', conflict };
 }
 
 // ------------------------------------------------------------------ polut
@@ -323,13 +355,32 @@ export function validateStory(model: StoryModel): string[] {
   return errors;
 }
 
+/**
+ * Tarinamallin varoitukset suomeksi: sisällölliset ristiriidat, jotka eivät riko rakennetta (validateStory
+ * palauttaa vain virheet). Nyt: samannimisten järjestysnumerot vs. ajanjaksojen alkupäivät.
+ */
+export function validateStoryWarnings(model: StoryModel): string[] {
+  const warnings: string[] = [];
+  const names: string[] = [];
+  for (const p of model.persons) {
+    const k = normName(p.name);
+    if (k && !names.includes(k)) names.push(k);
+  }
+  for (const name of names) {
+    const w = homonymOrdinalConflict(model, name);
+    if (w) warnings.push(w);
+  }
+  return warnings;
+}
+
 // ------------------------------------------------------------------ muokkaus (muuttumaton)
 
 /**
  * Antaa samannimisille järjestysnumerot 1…k säilyttäen nykyisen keskinäisen järjestyksen
  * (järjestysnumero, sitten ajanjakson alku, sitten luontiaika). Yksi henkilö saa null.
- * `priorityId`: tasatilanteessa (sama, asetettu järjestysnumero) tämä henkilö sijoitetaan ensin. upsertPerson käyttää
- * tätä, jotta henkilön voi siirtää kohtaan k antamalla järjestysnumeron k.
+ * `priorityId`: jos tällä henkilöllä on järjestysnumero k, hänet siirretään kohtaan k: hänet otetaan ryhmästä,
+ * muut järjestetään, ja hänet lisätään indeksiin k − 1 (rajattuna 0…muiden määrä). Siirto toimii molempiin
+ * suuntiin (esim. HANNA I → 3 ja HANNA III → 1). upsertPerson käyttää tätä.
  */
 export function assignHomonymOrdinals(model: StoryModel, name: string, priorityId?: string | null): StoryModel {
   const key = normName(name);
@@ -337,16 +388,18 @@ export function assignHomonymOrdinals(model: StoryModel, name: string, priorityI
   const ordinal = new Map<string, number | null>();
   if (group.length === 1) ordinal.set(group[0].id, null);
   else if (group.length > 1) {
-    // Etusija vain annetulle numerolle (pyydetty paikka); numeroton henkilö ei ohita muita.
-    const prio = (p: Person) => (priorityId != null && p.id === priorityId && p.homonymOrdinal != null ? 0 : 1);
-    const sorted = [...group].sort(
-      (a, b) =>
-        cmpOrd(a.homonymOrdinal, b.homonymOrdinal) ||
-        prio(a) - prio(b) ||
-        cmpStr(a.period?.start, b.period?.start) ||
-        cmpStr(a.createdAt, b.createdAt) ||
-        cmpStr(a.id, b.id),
-    );
+    const order = (a: Person, b: Person) =>
+      cmpOrd(a.homonymOrdinal, b.homonymOrdinal) ||
+      cmpStr(a.period?.start, b.period?.start) ||
+      cmpStr(a.createdAt, b.createdAt) ||
+      cmpStr(a.id, b.id);
+    // Pyydetty paikka vain annetulle numerolle; numeroton henkilö ei ohita muita.
+    const moved = priorityId != null ? group.find((p) => p.id === priorityId && p.homonymOrdinal != null) : undefined;
+    const sorted = group.filter((p) => p !== moved).sort(order);
+    if (moved) {
+      const k = Number.isFinite(moved.homonymOrdinal) ? Math.round(moved.homonymOrdinal!) : sorted.length + 1;
+      sorted.splice(Math.min(Math.max(k - 1, 0), sorted.length), 0, moved);
+    }
     sorted.forEach((p, i) => ordinal.set(p.id, i + 1));
   }
   return {

@@ -12,7 +12,7 @@ import type { JumpResult } from '../core/matrix/jumps';
 import type { Op369Report } from '../core/matrix/ops369';
 import { t9Code } from '../core/matrix/refs';
 import type { RouteOrder, RouteTestResult } from '../core/matrix/route-test';
-import { createSeedStory } from '../core/matrix/seed';
+import { createSeedStory, TASK_TIMING, TASK_TIMING_NOTE } from '../core/matrix/seed';
 import { getPerson, personLabel } from '../core/matrix/story';
 import { openEdge, rootTrail } from '../core/matrix/trail';
 import type {
@@ -36,8 +36,8 @@ import type {
   StorySource,
   TrailStep,
 } from '../core/matrix/types';
-import { HYPOTHESIS_LABELS, MAX_DEPTH, MATRIX_VERSION, nodeKey, normName, parseNodeKey } from '../core/matrix/types';
-import { classify, type Verdict } from '../core/stats';
+import { HYPOTHESIS_LABELS, MAX_DEPTH, MATRIX_VERSION, nodeKey, normName, parseNodeKey, realmOf } from '../core/matrix/types';
+import { benjaminiHochberg, classify, fmtP, type Verdict, type VerdictInfo } from '../core/stats';
 
 // ------------------------------------------------------------------ tyypit
 
@@ -100,6 +100,64 @@ export interface RouteRunSummary {
   durationMs: number;
 }
 
+/** Yhden reittikysymyksen (kanoninen avain) ajohistoria: ensimmäisen ajon aika ja ajojen määrä. */
+export interface RouteQuestionStat {
+  first: string;
+  count: number;
+}
+
+/**
+ * Pysyvä, rajaamaton hakemisto kaikista reittitestiajoista. `routeRuns` rajataan tallennettaessa (RUNS_PERSIST),
+ * mutta ajoitussääntö ja monivertailun m lasketaan tästä, joten vanhat ajot eivät unohdu.
+ */
+export interface RouteRunIndex {
+  /** Kanoninen kysymysavain (routeQuestionKey) → ensimmäinen ajo ja ajojen määrä. */
+  questions: Record<string, RouteQuestionStat>;
+  /** Kaikkien reittitestiajojen määrä. */
+  total: number;
+}
+
+/** Reittitestin lomake. Pidetään storessa, jotta se säilyy, kun Reitit-sivulta poistutaan ja palataan. */
+export interface RouteTestForm {
+  sourceId: string;
+  excluded: string[];
+  extra: NamedCode[];
+  order: RouteOrder;
+  R: number;
+  seedText: string;
+  strings: number;
+  hyp: string;
+}
+
+/** Käynnissä oleva reittitesti (vain muistissa). */
+export interface RouteTestRunning {
+  done: number;
+  total: number;
+  startedAt: string;
+  /** Ajon reitti ja parametrit tekstinä, koska lomaketta voi muuttaa ajon aikana. */
+  label: string;
+}
+
+/** Reittitestin käyttöliittymätila storessa (ei tallenneta laitteelle). */
+export interface RouteTestUi {
+  form: RouteTestForm;
+  running: RouteTestRunning | null;
+  error: string | null;
+  /** Viimeisimmän ajon nollamallin arvot histogrammia varten. */
+  last: { id: string; nullValues: Float64Array } | null;
+  selected: string | null;
+}
+
+export function initialRouteTestUi(): RouteTestUi {
+  return {
+    form: { sourceId: 'first', excluded: [], extra: [], order: 'mikä-tahansa', R: 1000, seedText: '20261016', strings: 0, hyp: '' },
+    running: null,
+    error: null,
+    last: null,
+    selected: null,
+  };
+}
+
 export interface MatrixState {
   story: StoryModel;
   trail: TrailStep[];
@@ -111,10 +169,14 @@ export interface MatrixState {
   last369: Op369Report | null;
   lastJump: JumpResult | null;
   routeRuns: RouteRunSummary[];
+  /** Kaikkien ajojen rajaamaton hakemisto (ajoitussääntö ja monivertailu). */
+  runIndex: RouteRunIndex;
   /** Lisäkenttä tehtävänannon listaan: reittihypoteesien lukitukset (tarvitaan ajoituksen todentamiseen). */
   locks: RouteLock[];
   view: MatrixViewMode;
   sub: MatrixSub;
+  /** Reittitestin lomake ja käynnissä oleva ajo (vain muistissa). */
+  routeTest: RouteTestUi;
 }
 
 export const LOG_PERSIST = 500;
@@ -139,9 +201,11 @@ export function initialMatrixState(): MatrixState {
     last369: null,
     lastJump: null,
     routeRuns: [],
+    runIndex: emptyRunIndex(),
     locks: [],
     view: 'verkko',
     sub: null,
+    routeTest: initialRouteTestUi(),
   };
 }
 
@@ -177,6 +241,8 @@ export interface PersistedMatrix {
   log: MatrixLogEntry[];
   visited: string[];
   routeRuns: RouteRunSummary[];
+  /** Rajaamaton ajohakemisto. Puuttuu vanhasta tallennuksesta: rakennetaan silloin tallennetuista ajoista. */
+  runIndex: RouteRunIndex;
   locks: RouteLock[];
   view: MatrixViewMode;
 }
@@ -195,6 +261,7 @@ export function serializeMatrix(m: MatrixState): PersistedMatrix {
     log: m.log.slice(-LOG_PERSIST),
     visited: m.visited.slice(-VISITED_PERSIST),
     routeRuns: m.routeRuns.slice(-RUNS_PERSIST),
+    runIndex: m.runIndex,
     locks: m.locks,
     view: m.view,
   };
@@ -311,6 +378,41 @@ function sanitizePath(x: unknown): StoryPath | null {
   };
 }
 
+const sameCodeSet = (a: readonly string[], b: readonly string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+
+/**
+ * Polun ajoitus lukituksia vasten (lataus ja JSON-tuonti). Tehtävänannon polku on aina 'löydön-jälkeen'
+ * (TASK_TIMING). 'ennen-löydöstä' säilyy vain, jos tiiviste vastaa tämän laitteen lukitusta, joka koskee samoja
+ * koodeja; muuten 'ei-tiedossa' ja syy kirjataan `dropped`-listaan.
+ */
+function checkPathTiming(p: StoryPath, locks: readonly Pick<RouteLock, 'hash' | 'codes'>[], dropped: string[]): StoryPath {
+  const h = p.hypothesis;
+  if (p.source === 'tehtävänanto') {
+    if (h.timing === 'löydön-jälkeen') return p;
+    if (h.timing === 'ennen-löydöstä')
+      dropped.push(
+        `Polku ”${p.title}”: tehtävänannon polku ei voi olla ”${HYPOTHESIS_LABELS['ennen-löydöstä']}”, joten se merkitään ”${HYPOTHESIS_LABELS['löydön-jälkeen']}”.`,
+      );
+    return { ...p, hypothesis: { ...TASK_TIMING } };
+  }
+  if (h.timing !== 'ennen-löydöstä') return p;
+  const codes = routeCodesFromPath(p).map((c) => c.code);
+  if (locks.some((l) => l.hash === h.lockHash && sameCodeSet(l.codes, codes))) return p;
+  dropped.push(
+    `Polku ”${p.title}”: ajoitus ”${HYPOTHESIS_LABELS['ennen-löydöstä']}” muutettiin muotoon ”${HYPOTHESIS_LABELS['ei-tiedossa']}”, ` +
+      `koska tiivistettä ${(h.lockHash ?? '').slice(0, 12)}… vastaavaa samojen koodien lukitusta ei ole tällä laitteella.`,
+  );
+  return {
+    ...p,
+    hypothesis: {
+      timing: 'ei-tiedossa',
+      statedAt: h.statedAt,
+      lockHash: null,
+      note: `${h.note ? `${h.note} ` : ''}(Ajoitus ”ennen löydöstä” hylättiin: ei vastaavaa lukitusta tällä laitteella.)`.trim(),
+    },
+  };
+}
+
 function sanitizeList<T>(raw: unknown, f: (x: unknown) => T | null, label: string, dropped: string[]): T[] {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) {
@@ -332,8 +434,14 @@ function sanitizeList<T>(raw: unknown, f: (x: unknown) => T | null, label: strin
  * Tarinamallin rakenteellinen tarkistus (lataus ja JSON-tuonti). Palauttaa null, jos syöte ei ole tarinamalli
  * lainkaan (ei olio tai versio ≠ 1). Muuten virheelliset kohteet ohitetaan yksitellen ja ilmoitetaan, jotta
  * käyttäjän muut tiedot säilyvät. Sisällöllinen eheys tarkistetaan erikseen (story.ts: validateStory).
+ *
+ * Polun ajoitus ”ennen löydöstä” hyväksytään vain, jos sen tiiviste vastaa jotakin `locks`-listan lukitusta
+ * (tämän laitteen lukitukset). Ilman lukituksia jokainen tällainen väite muutetaan muotoon 'ei-tiedossa'.
  */
-export function sanitizeStory(raw: unknown): { story: StoryModel | null; dropped: string[] } {
+export function sanitizeStory(
+  raw: unknown,
+  locks: readonly Pick<RouteLock, 'hash' | 'codes'>[] = [],
+): { story: StoryModel | null; dropped: string[] } {
   const dropped: string[] = [];
   if (!isObj(raw)) return { story: null, dropped: ['Tarinamalli puuttuu tai ei ole JSON-olio.'] };
   if (raw.version !== 1) return { story: null, dropped: [`Tuntematon tarinamallin versio ${JSON.stringify(raw.version)} (odotettiin 1).`] };
@@ -344,8 +452,9 @@ export function sanitizeStory(raw: unknown): { story: StoryModel | null; dropped
     persons: sanitizeList(raw.persons, sanitizePerson, 'Henkilöt', dropped),
     relations: sanitizeList(raw.relations, sanitizeRelation, 'Suhteet', dropped),
     glosses: sanitizeList(raw.glosses, sanitizeGloss, 'Tulkinnat', dropped),
-    paths: sanitizeList(raw.paths, sanitizePath, 'Polut', dropped),
+    paths: [],
   };
+  story.paths = sanitizeList(raw.paths, sanitizePath, 'Polut', dropped).map((p) => checkPathTiming(p, locks, dropped));
   return { story, dropped };
 }
 
@@ -458,8 +567,13 @@ function sanitizeRun(x: unknown): RouteRunSummary | null {
   };
 }
 
+/**
+ * Lukitus ladattaessa. Tiivisteen on oltava SHA-256-muotoa (64 heksamerkkiä); sisältöä ei lasketa uudelleen, koska
+ * lukitus on tämän laitteen oma kirjaus (käyttöliittymä: ”lukittu tällä laitteella”).
+ */
 function sanitizeLock(x: unknown): RouteLock | null {
   if (!isObj(x) || !isStr(x.id) || !isStr(x.createdAt) || !isStr(x.hash) || !isStr(x.text)) return null;
+  if (!/^[0-9a-f]{64}$/.test(x.hash)) return null;
   const order = ORDERS.includes(x.order as RouteOrder) ? (x.order as RouteOrder) : null;
   if (!order) return null;
   return {
@@ -476,6 +590,111 @@ function sanitizeLock(x: unknown): RouteLock | null {
   };
 }
 
+/** Ajohakemisto ladattaessa. Avaimet muutetaan kanonisiksi (routeQuestionKey); virheelliset ohitetaan. */
+function sanitizeRunIndex(x: unknown): RouteRunIndex {
+  const out = emptyRunIndex();
+  if (!isObj(x)) return out;
+  if (isObj(x.questions)) {
+    for (const [k, v] of Object.entries(x.questions)) {
+      if (!isObj(v) || !isStr(v.first) || !isNum(v.count) || v.count < 1) continue;
+      let key: string | null = null;
+      try {
+        const q = JSON.parse(k) as unknown;
+        if (Array.isArray(q) && Array.isArray(q[0]) && q[0].every(isStr) && ORDERS.includes(q[1] as RouteOrder) && isStr(q[2]))
+          key = routeQuestionKey(q[0] as string[], q[1] as RouteOrder, q[2] || null);
+      } catch {
+        key = null;
+      }
+      if (!key) continue;
+      const prev = out.questions[key];
+      out.questions[key] = prev
+        ? { first: prev.first <= v.first ? prev.first : v.first, count: prev.count + Math.floor(v.count) }
+        : { first: v.first, count: Math.floor(v.count) };
+    }
+  }
+  out.total = isNum(x.total) && x.total > 0 ? Math.floor(x.total) : 0;
+  return out;
+}
+
+/** Tallennettu hakemisto ja tallennetut ajot yhteen: jokainen tallennettu ajo on hakemistossa vähintään kerran. */
+export function mergeRunIndex(stored: RouteRunIndex, runs: readonly Pick<RouteRunSummary, 'codes' | 'order' | 'datasetSha' | 'ts'>[]): RouteRunIndex {
+  const fromRuns = buildRunIndex(runs);
+  const questions: Record<string, RouteQuestionStat> = { ...stored.questions };
+  for (const [k, v] of Object.entries(fromRuns.questions)) {
+    const s = questions[k];
+    questions[k] = s ? { first: s.first <= v.first ? s.first : v.first, count: Math.max(s.count, v.count) } : v;
+  }
+  const sum = Object.values(questions).reduce((a, v) => a + v.count, 0);
+  return { questions, total: Math.max(stored.total, sum) };
+}
+
+/**
+ * Tallennettujen ajojen ajoitus ladattaessa: 'ennen-löydöstä' säilyy vain, jos (1) tiivistettä vastaava saman
+ * kysymyksen lukitus on tällä laitteella ja se tehtiin ennen ajoa, (2) ajo oli koodijoukon ensimmäinen ja (3) reitti
+ * ei tule tehtävänannosta. Luokitus lasketaan aina uudelleen (classifyRouteRun). Palauttaa muutettujen määrän.
+ */
+function recheckRuns(
+  runs: RouteRunSummary[],
+  locks: readonly RouteLock[],
+  index: RouteRunIndex,
+  story: StoryModel,
+): { runs: RouteRunSummary[]; changed: number } {
+  let changed = 0;
+  const out = runs.map((r0) => {
+    let r = r0;
+    if (r.timing === 'ennen-löydöstä') {
+      const key = routeQuestionKey(r.codes, r.order, r.datasetSha);
+      const lock = locks.find((l) => l.hash === r.lockHash && l.createdAt < r.ts && routeQuestionKey(l.codes, l.order, l.datasetSha) === key);
+      const first = familyExposure(index, r.codes, r.datasetSha).first;
+      const task = taskDerivedReason(r.codes, story);
+      let timing: HypothesisTiming | null = null;
+      let why = '';
+      if (!lock) {
+        timing = 'ei-tiedossa';
+        why = 'vastaavaa saman kysymyksen lukitusta ei löytynyt tältä laitteelta';
+      } else if (task) {
+        timing = 'löydön-jälkeen';
+        why = task;
+      } else if (first && first < r.ts) {
+        timing = 'löydön-jälkeen';
+        why = `ajo ei ollut koodijoukon ensimmäinen (ensimmäinen ${isoShort(first)}); lukitus kattaa vain ensimmäisen ajon`;
+      }
+      if (timing) {
+        changed++;
+        r = {
+          ...r,
+          timing,
+          lockId: null,
+          lockHash: null,
+          timingReason: `Tallennettu ajoitus ”${HYPOTHESIS_LABELS['ennen-löydöstä']}” hylättiin ladattaessa: ${why}`,
+        };
+      }
+    }
+    const verdict = classifyRouteRun(r).verdict;
+    return verdict === r.verdict ? r : { ...r, verdict };
+  });
+  return { runs: out, changed };
+}
+
+/** Tallennetun reitin ajoitus ladattaessa: 'ennen-löydöstä' vain, jos tiiviste vastaa samojen koodien lukitusta. */
+function recheckSavedRoute(r: SavedRoute, locks: readonly RouteLock[], story: StoryModel): SavedRoute | null {
+  if (r.hypothesis.timing !== 'ennen-löydöstä') return null;
+  const codes = routeCodesFromTrail(r.trail, story).map((c) => c.code);
+  const ok = locks.some((l) => l.hash === r.hypothesis.lockHash && lockMatchesCodes(l, codes));
+  const task = taskDerivedReason(codes, story);
+  if (ok && !task) return null;
+  const why = ok && task ? task : 'ei vastaavaa samojen koodien lukitusta tällä laitteella.';
+  return {
+    ...r,
+    hypothesis: {
+      ...r.hypothesis,
+      timing: ok ? 'löydön-jälkeen' : 'ei-tiedossa',
+      lockHash: null,
+      note: `${r.hypothesis.note ? `${r.hypothesis.note} ` : ''}(Ajoitus ”ennen löydöstä” hylättiin ladattaessa: ${why})`,
+    },
+  };
+}
+
 /**
  * Tallennettu matriisitila takaisin. Ei koskaan heitä poikkeusta: puuttuva tai virheellinen data korvataan
  * oletuksilla (tarina: testitapauksen siemendata). Käyttäjän tallentamaa tarinaa ei korvata siemenellä, jos se
@@ -487,9 +706,11 @@ export function deserializeMatrix(raw: unknown): { state: MatrixState; warnings:
   if (raw === undefined || raw === null) return { state: base, warnings };
   if (!isObj(raw)) return { state: base, warnings: ['Tallennettu matriisitila oli virheellinen; käytetään oletuksia ja testitapauksen siemendataa.'] };
   try {
+    // Lukitukset ensin: tarinan polkujen, tallennettujen reittien ja ajojen ajoitus tarkistetaan niitä vasten.
+    const locks = sanitizeList(raw.locks, sanitizeLock, 'Reittihypoteesien lukitukset', warnings);
     let story = base.story;
     if (raw.story !== undefined) {
-      const r = sanitizeStory(raw.story);
+      const r = sanitizeStory(raw.story, locks);
       if (r.story) {
         story = r.story;
         warnings.push(...r.dropped.map((d) => `Tallennettu tarina: ${d}`));
@@ -498,17 +719,34 @@ export function deserializeMatrix(raw: unknown): { state: MatrixState; warnings:
     const t = deserializeTrail(raw.trail);
     if (t.cut && raw.trail !== undefined) warnings.push(`Tallennettu reitti katkaistiin ${t.trail.length} askeleeseen virheellisen askeleen kohdalta.`);
     const visited = strArr(raw.visited).slice(-VISITED_PERSIST);
+    let savedChanged = 0;
+    const saved = sanitizeList(raw.saved, sanitizeSavedRoute, 'Tallennetut reitit', warnings).map((r) => {
+      const fixed = recheckSavedRoute(r, locks, story);
+      if (fixed) savedChanged++;
+      return fixed ?? r;
+    });
+    if (savedChanged)
+      warnings.push(`Tallennetut reitit: ${savedChanged} reitin ajoitus ”${HYPOTHESIS_LABELS['ennen-löydöstä']}” hylättiin (ei vastaavaa lukitusta tai tehtävänannon reitti).`);
+    const storedRuns = sanitizeList(raw.routeRuns, sanitizeRun, 'Reittitestit', warnings).slice(-RUNS_PERSIST);
+    // Vanha tallennus ilman hakemistoa: hakemisto rakennetaan tallennetuista ajoista (vanhemmat ajot on jo rajattu pois).
+    const runIndex = mergeRunIndex(sanitizeRunIndex(raw.runIndex), storedRuns);
+    const rc = recheckRuns(storedRuns, locks, runIndex, story);
+    if (rc.changed)
+      warnings.push(
+        `Reittitestit: ${rc.changed} ajon ajoitus ”${HYPOTHESIS_LABELS['ennen-löydöstä']}” hylättiin (ei vastaavaa lukitusta, ei koodijoukon ensimmäinen ajo tai tehtävänannon reitti).`,
+      );
     return {
       state: {
         ...base,
         story,
         trail: t.trail,
         direction: raw.direction === '432' ? '432' : '234',
-        saved: sanitizeList(raw.saved, sanitizeSavedRoute, 'Tallennetut reitit', warnings),
+        saved,
         log: sanitizeList(raw.log, sanitizeLogEntry, 'Matriisin loki', warnings).slice(-LOG_PERSIST),
         visited: visited.length ? visited : ['root'],
-        routeRuns: sanitizeList(raw.routeRuns, sanitizeRun, 'Reittitestit', warnings).slice(-RUNS_PERSIST),
-        locks: sanitizeList(raw.locks, sanitizeLock, 'Reittihypoteesien lukitukset', warnings),
+        routeRuns: rc.runs,
+        runIndex,
+        locks,
         view: raw.view === 'lista' ? 'lista' : 'verkko',
       },
       warnings,
@@ -609,20 +847,149 @@ export function routeMathFacts(
 
 // ------------------------------------------------------------------ hypoteesin ajoitus
 
-/** Reittikysymyksen identiteetti: koodit järjestyksessä, järjestysehto ja aineisto. R, siemen ja jonot eivät muuta kysymystä. */
-export function routeQuestionKey(codes: string[], order: RouteOrder, datasetSha: string | null): string {
-  return JSON.stringify([codes, order, datasetSha ?? '']);
+/**
+ * Reittikysymyksen kanoninen muoto: sama testisuure → sama kysymys.
+ * - 'mikä-tahansa': lyhin ikkuna ei riipu koodien järjestyksestä, joten koodit lajitellaan.
+ * - '432' koodeille c₁ … c_k on sama ehto kuin '234' käänteisille koodeille c_k … c₁.
+ */
+export function canonicalQuestion(codes: readonly string[], order: RouteOrder): { codes: string[]; order: RouteOrder } {
+  if (order === 'mikä-tahansa') return { codes: [...codes].sort(), order };
+  if (order === '432') return { codes: [...codes].reverse(), order: '234' };
+  return { codes: [...codes], order };
 }
 
-/** Lukituksen kanoninen sisältö SHA-256:ta varten (avaimet aakkosjärjestyksessä + aikaleima). */
+/**
+ * Reittikysymyksen identiteetti: kanoniset koodit, järjestysehto ja aineisto (SHA-256). R, siemen ja jonot eivät
+ * muuta kysymystä.
+ */
+export function routeQuestionKey(codes: readonly string[], order: RouteOrder, datasetSha: string | null): string {
+  const q = canonicalQuestion(codes, order);
+  return JSON.stringify([q.codes, q.order, datasetSha ?? '']);
+}
+
+/**
+ * Koodijoukko (monijoukko) ja aineisto. Saman koodijoukon kaikki järjestysvariantit kuuluvat samaan perheeseen:
+ * yhden variantin tuloksen näkeminen kertoo myös muista, joten mikä tahansa perheen ajo on aiempi altistus.
+ */
+export function routeFamilyKey(codes: readonly string[], datasetSha: string | null): string {
+  return JSON.stringify([[...codes].sort(), datasetSha ?? '']);
+}
+
+function familyOfQuestionKey(key: string): string | null {
+  try {
+    const q = JSON.parse(key) as unknown;
+    return Array.isArray(q) && Array.isArray(q[0]) ? routeFamilyKey(q[0] as string[], (q[2] as string) || null) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function emptyRunIndex(): RouteRunIndex {
+  return { questions: {}, total: 0 };
+}
+
+/** Uusi ajo hakemistoon (palauttaa uuden olion). */
+export function addRunToIndex(index: RouteRunIndex, run: Pick<RouteRunSummary, 'codes' | 'order' | 'datasetSha' | 'ts'>): RouteRunIndex {
+  const key = routeQuestionKey(run.codes, run.order, run.datasetSha);
+  const prev = index.questions[key];
+  return {
+    questions: {
+      ...index.questions,
+      [key]: prev ? { first: prev.first <= run.ts ? prev.first : run.ts, count: prev.count + 1 } : { first: run.ts, count: 1 },
+    },
+    total: index.total + 1,
+  };
+}
+
+export function buildRunIndex(runs: readonly Pick<RouteRunSummary, 'codes' | 'order' | 'datasetSha' | 'ts'>[]): RouteRunIndex {
+  const questions: Record<string, RouteQuestionStat> = {};
+  for (const r of runs) {
+    const key = routeQuestionKey(r.codes, r.order, r.datasetSha);
+    const prev = questions[key];
+    questions[key] = prev ? { first: prev.first <= r.ts ? prev.first : r.ts, count: prev.count + 1 } : { first: r.ts, count: 1 };
+  }
+  return { questions, total: runs.length };
+}
+
+/** Koodijoukon altistus: kaikkien järjestysvarianttien ajot, saman kysymyksen ajot ja ensimmäisen ajon aika. */
+export function familyExposure(
+  index: RouteRunIndex,
+  codes: readonly string[],
+  datasetSha: string | null,
+  order: RouteOrder = 'mikä-tahansa',
+): { count: number; same: number; first: string | null } {
+  const fam = routeFamilyKey(codes, datasetSha);
+  const own = routeQuestionKey(codes, order, datasetSha);
+  let count = 0;
+  let same = 0;
+  let first: string | null = null;
+  for (const [k, v] of Object.entries(index.questions)) {
+    if (familyOfQuestionKey(k) !== fam) continue;
+    count += v.count;
+    if (k === own) same += v.count;
+    if (first === null || v.first < first) first = v.first;
+  }
+  return { count, same, first };
+}
+
+/** Rajatut ajot: hakemiston ja aiempien ajojen lista käyvät molemmat (testit käyttävät listaa). */
+export type RouteHistory = RouteRunIndex | readonly Pick<RouteRunSummary, 'codes' | 'order' | 'datasetSha' | 'ts'>[];
+const asIndex = (h: RouteHistory): RouteRunIndex => ('questions' in h ? h : buildRunIndex(h));
+
+/**
+ * BH-q tallennetuille p-arvoille, kun ajoja on yhteensä `total` (m = total). Vanhojen, tallennuksesta rajattujen
+ * ajojen p-arvoja ei enää ole; ne oletetaan arvoiksi 1, jolloin q-arvot eivät aliarvioidu (BH on monotoninen).
+ */
+export function routeBH(ps: number[], total: number): number[] {
+  const missing = Math.max(0, total - ps.length);
+  return benjaminiHochberg([...ps, ...new Array<number>(missing).fill(1)]).slice(0, ps.length);
+}
+
+/** Lukituksen kanoninen sisältö SHA-256:ta varten (avaimet aakkosjärjestyksessä + aikaleima). Kysymys kanonisena. */
 export function canonicalRouteLock(text: string, codes: string[], order: RouteOrder, datasetSha: string | null, createdAt: string): string {
+  const q = canonicalQuestion(codes, order);
   return `${JSON.stringify([
-    ['codes', codes],
+    ['codes', q.codes],
     ['datasetSha', datasetSha ?? ''],
-    ['order', order],
+    ['order', q.order],
     ['text', text],
     ['version', MATRIX_VERSION],
   ])}\n${createdAt}`;
+}
+
+/** Saman kysymyksen ensimmäinen lukitus (kanoninen avain). Ensimmäinen lukitus on se, joka ratkaisee ajoituksen. */
+export function lockForQuestion<L extends Pick<RouteLock, 'codes' | 'order' | 'datasetSha' | 'createdAt'>>(
+  locks: readonly L[],
+  codes: readonly string[],
+  order: RouteOrder,
+  datasetSha: string | null,
+): L | null {
+  const key = routeQuestionKey(codes, order, datasetSha);
+  let best: L | null = null;
+  for (const l of locks) if (routeQuestionKey(l.codes, l.order, l.datasetSha) === key && (!best || l.createdAt < best.createdAt)) best = l;
+  return best;
+}
+
+// ------------------------------------------------------------------ tehtävänannon reitit (alkuperä)
+
+/** Tehtävänannosta johdetut koodijoukot: ensimmäinen reittitesti, testireitin murupolku ja tehtävänannon polut. */
+export function taskRouteFamilies(story: StoryModel): { codes: string[]; label: string }[] {
+  const out: { codes: string[]; label: string }[] = [
+    { codes: firstRouteCodes().map((c) => c.code), label: `ensimmäinen reittitesti ${FIRST_ROUTE_NAMES.join(' → ')}` },
+    { codes: uniqueCodes(['MAX', 'HANNA'].map((n) => namedCode(n))).map((c) => c.code), label: 'testireitti MAX (629) → 2 → HANNA → HANNA III' },
+  ];
+  const paths = [...createSeedStory().paths, ...story.paths.filter((p) => p.source === 'tehtävänanto')];
+  for (const p of paths) out.push({ codes: routeCodesFromPath(p).map((c) => c.code), label: `${p.title}: ${p.steps.map((s) => s.name).join(' → ')}` });
+  return out.filter((f) => f.codes.length > 0);
+}
+
+/**
+ * Jos reitti tulee tehtävänannosta (lähde `sourceLabel` tai sama koodijoukko kuin tehtävänannon reitillä), syy sille,
+ * miksi ajoitus on aina 'löydön-jälkeen'. Muuten null.
+ */
+export function taskDerivedReason(codes: readonly string[], story: StoryModel, sourceLabel: string | null = null): string | null {
+  const label = sourceLabel ?? taskRouteFamilies(story).find((f) => sameCodeSet(f.codes, codes))?.label ?? null;
+  return label ? `Reitti tulee tehtävänannosta (${label}). ${TASK_TIMING_NOTE}` : null;
 }
 
 /** ISO-aikaleima luettavaksi ilman kieliasetusta: "2026-10-16 16:39:22 UTC". */
@@ -637,41 +1004,57 @@ export interface TimingVerdict {
 }
 
 /**
- * Sama sääntö kuin Testit-välilehden esirekisteröinnissä: 'ennen-löydöstä' vain, jos hypoteesi lukittiin ennen
- * kuin samaa reittikysymystä (koodit + järjestys + aineisto) oli ajettu kertaakaan. Muuten 'löydön-jälkeen'
- * (kysymys on jo nähty) tai 'ei-tiedossa' (ei lukitusta eikä aiempia ajoja).
+ * Seuraavan ajon hypoteesin ajoitus. Sama periaate kuin Testit-välilehden esirekisteröinnissä, tiukennettuna:
+ * - 'ennen-löydöstä' (vahvistava) vain, jos saman kysymyksen (kanoninen avain) lukitus on olemassa eikä samaa
+ *   koodijoukkoa ole ajettu kertaakaan millään järjestyksellä. Lukitus kattaa siis vain ensimmäisen ajonsa;
+ *   myöhemmät ajot (eri siemen tai R) ovat 'löydön-jälkeen'.
+ * - Tehtävänannosta johdettu reitti (`taskReason`) on aina 'löydön-jälkeen'.
+ * - Muuten 'löydön-jälkeen' (koodijoukko on jo nähty) tai 'ei-tiedossa' (ei lukitusta eikä aiempia ajoja).
+ * Lukitus on tämän laitteen oma kirjaus, joten syy kertoo sen ("lukittiin tällä laitteella").
  */
 export function evaluateRouteTiming(
   lock: Pick<RouteLock, 'codes' | 'order' | 'datasetSha' | 'createdAt' | 'hash'> | null,
-  runs: Pick<RouteRunSummary, 'codes' | 'order' | 'datasetSha' | 'ts'>[],
+  history: RouteHistory,
   codes: string[],
   order: RouteOrder,
   datasetSha: string | null,
+  taskReason: string | null = null,
 ): TimingVerdict {
+  const index = asIndex(history);
   const key = routeQuestionKey(codes, order, datasetSha);
-  const same = runs.filter((r) => routeQuestionKey(r.codes, r.order, r.datasetSha) === key);
+  const exp = familyExposure(index, codes, datasetSha, order);
   const usable = lock && routeQuestionKey(lock.codes, lock.order, lock.datasetSha) === key ? lock : null;
+  const variants = exp.count > exp.same ? `, joista ${exp.count - exp.same} muulla järjestysehdolla tai koodien järjestyksellä` : '';
+  const seen = exp.first ? `Sama koodijoukko on ajettu ${exp.count} kertaa${variants} (ensimmäinen ${isoShort(exp.first)}).` : '';
+  if (taskReason)
+    return { timing: 'löydön-jälkeen', reason: [taskReason, seen].filter(Boolean).join(' '), preregistered: false };
   if (usable) {
-    const before = same.filter((r) => r.ts < usable.createdAt);
-    if (!before.length)
+    const locked = `Hypoteesi lukittiin tällä laitteella ${isoShort(usable.createdAt)} (SHA-256 ${usable.hash.slice(0, 12)}…)`;
+    if (!exp.first)
       return {
         timing: 'ennen-löydöstä',
-        reason: `Hypoteesi lukittiin ${isoShort(usable.createdAt)} (SHA-256 ${usable.hash.slice(0, 12)}…) ennen yhtäkään saman reittikysymyksen ajoa.`,
+        reason: `${locked} ennen yhtäkään saman koodijoukon reittitestiä. Vain lukituksen jälkeinen ensimmäinen ajo on vahvistava; myöhemmät ajot (eri siemen tai R) ovat eksploratiivisia.`,
         preregistered: true,
+      };
+    if (exp.first < usable.createdAt)
+      return {
+        timing: 'löydön-jälkeen',
+        reason:
+          `Sama koodijoukko (${codes.join(' → ')}) ajettiin jo ennen lukitusta. ${seen} ` +
+          'Lukitus tehtiin tuloksen näkemisen jälkeen, joten se ei ole ennakkoon tehty.',
+        preregistered: false,
       };
     return {
       timing: 'löydön-jälkeen',
-      reason:
-        `Sama reittikysymys (koodit ${codes.join(' → ')}, järjestys ${order}) ajettiin jo ${before.length} kertaa ennen lukitusta ` +
-        `(ensimmäinen ${isoShort(before[0].ts)}). Lukitus tehtiin tuloksen näkemisen jälkeen, joten se ei ole ennakkoon tehty.`,
+      reason: `${locked}, mutta lukituksen jälkeen koodijoukko on jo ajettu. ${seen} Lukitus kattaa vain ensimmäisen ajon, joten uusi ajo on eksploratiivinen.`,
       preregistered: false,
     };
   }
   const note = lock ? ' Valittu lukitus koskee eri kysymystä (koodit tai järjestys eroavat).' : '';
-  if (same.length)
+  if (exp.first)
     return {
       timing: 'löydön-jälkeen',
-      reason: `Sama reittikysymys on jo ajettu ${same.length} kertaa, eikä hypoteesia lukittu ennen ensimmäistä ajoa.${note}`,
+      reason: `${seen} Hypoteesia ei lukittu ennen ensimmäistä ajoa.${note}`,
       preregistered: false,
     };
   return {
@@ -682,31 +1065,165 @@ export function evaluateRouteTiming(
 }
 
 /**
- * Tallennettavan reitin hypoteesitieto. 'ennen-löydöstä' hyväksytään vain voimassa olevalla lukituksella
- * (evaluateRouteTiming antaa 'ennen-löydöstä'); muuten pyyntö muutetaan muotoon 'löydön-jälkeen' ja syy kerrotaan.
+ * Reittitestin luokitus. Ennalta lukittu p ≤ α (”lukittu-alle-alfa”) vaatii, että myös Wilsonin 95 %:n välin
+ * yläraja on ≤ α. Jos väli ylittää α:n, Monte Carlo -tulos on epävarma eikä vahvistava.
+ */
+export function classifyRouteRun(
+  r: Pick<RouteRunSummary, 'pValue' | 'pHigh' | 'alpha' | 'timing' | 'lockHash'>,
+): VerdictInfo & { inconclusive: boolean } {
+  const prereg = r.timing === 'ennen-löydöstä' && !!r.lockHash;
+  if (prereg && r.pValue <= r.alpha && !(r.pHigh <= r.alpha))
+    return {
+      verdict: 'eksploratiivinen',
+      title: 'Ennalta lukittu, Monte Carlo ei ratkaise',
+      text:
+        `p = ${fmtP(r.pValue)} ≤ α = ${r.alpha}, mutta Wilsonin 95 %:n välin yläraja ${fmtP(r.pHigh)} ylittää α:n. ` +
+        'Monte Carlo -tulos on epävarma, joten se ei ole vahvistava. Lukitus kattoi vain tämän ajon: uusi ajo samalla ' +
+        'kysymyksellä (esim. suuremmalla R:llä) on eksploratiivinen.',
+      inconclusive: true,
+    };
+  const v = classify(r.pValue, r.alpha, prereg);
+  if (v.verdict === 'eksploratiivinen' && r.timing === 'löydön-jälkeen')
+    return {
+      ...v,
+      text: `p = ${fmtP(r.pValue)} ≤ α = ${r.alpha}, mutta hypoteesi on muodostettu löydön jälkeen (ks. ajoitus). Tulos on vihje jatkotutkimukselle, ei vahvistus.`,
+      inconclusive: false,
+    };
+  return { ...v, inconclusive: false };
+}
+
+/**
+ * Koskeeko lukituksen kanoninen kysymys täsmälleen näitä reitin koodeja reitin järjestyksessä jollakin
+ * järjestysehdolla (esim. lukitus [IDA, MAX] '432' = reitti MAX → IDA '234').
+ */
+export function lockMatchesCodes(lock: Pick<RouteLock, 'codes' | 'order' | 'datasetSha'>, codes: readonly string[]): boolean {
+  const key = routeQuestionKey(lock.codes, lock.order, lock.datasetSha);
+  return ORDERS.some((o) => routeQuestionKey(codes, o, lock.datasetSha) === key);
+}
+
+/** Tallennettavan reitin konteksti: murupolku, tarina (koodit) ja loki (solmujen ensimmäiset avaukset). */
+export interface SaveRouteContext {
+  trail: TrailStep[];
+  story: StoryModel;
+  log: readonly MatrixLogEntry[];
+}
+
+const KEY_CHAR = /[\w@#:+\-ÅÄÖåäö]/;
+
+/** Mainitaanko solmuavain tekstissä kokonaisena (ei toisen avaimen osana, esim. code:62 ≠ code:629). */
+function mentionsKey(text: string, key: string): boolean {
+  for (let i = text.indexOf(key); i >= 0; i = text.indexOf(key, i + 1)) {
+    const before = i > 0 ? text[i - 1] : '';
+    const after = text[i + key.length] ?? '';
+    if (!KEY_CHAR.test(before) && !KEY_CHAR.test(after)) return true;
+  }
+  return false;
+}
+
+/** Solmun ensimmäinen lokimerkintä (avaus tai maininta). null = ei merkintää (ei avattu tai loki rajattu). */
+export function firstLogTouch(log: readonly MatrixLogEntry[], key: string): string | null {
+  let first: string | null = null;
+  for (const e of log) if ((e.ref === key || mentionsKey(e.text, key)) && (first === null || e.ts < first)) first = e.ts;
+  return first;
+}
+
+/**
+ * Kelpaako lukitus tallennettavan reitin ”ennen löydöstä” -perusteeksi:
+ * 1. lukituksen kanoninen kysymys koskee täsmälleen reitin koodeja (routeCodesFromTrail) reitin järjestyksessä,
+ * 2. reitti ei tule tehtävänannosta,
+ * 3. samaa koodijoukkoa ei ajettu ennen lukitusta (myöhemmät ajot sallitaan: hypoteesi oli jo lukittu),
+ * 4. lukitus tehtiin ennen reitin jokaisen π-solmun ensimmäistä lokimerkintää (juuri = yhteinen lähtöankkuri, ei mukana).
+ */
+export function lockFitsRoute(lock: RouteLock, history: RouteHistory, ctx: SaveRouteContext): { ok: boolean; reason: string } {
+  const codes = routeCodesFromTrail(ctx.trail, ctx.story).map((c) => c.code);
+  if (!lockMatchesCodes(lock, codes))
+    return {
+      ok: false,
+      reason: `Lukitus koskee eri kysymystä (${lock.names.join(' → ')}, järjestys ${lock.order}) kuin tallennettava reitti (koodit ${codes.join(' → ') || 'ei koodeja'}).`,
+    };
+  const task = taskDerivedReason(codes, ctx.story);
+  if (task) return { ok: false, reason: task };
+  const exp = familyExposure(asIndex(history), lock.codes, lock.datasetSha, lock.order);
+  if (exp.first && exp.first < lock.createdAt)
+    return { ok: false, reason: `Sama koodijoukko ajettiin reittitestinä ennen lukitusta (ensimmäinen ${isoShort(exp.first)}).` };
+  for (const st of ctx.trail.slice(1)) {
+    if (realmOf(st.ref) !== 'pi') continue;
+    const key = nodeKey(st.ref);
+    const t = firstLogTouch(ctx.log, key);
+    if (!t) return { ok: false, reason: `Solmun ${key} ensimmäistä avausta ei löydy lokista, joten lukituksen ei voida todeta edeltävän sitä.` };
+    if (t < lock.createdAt) return { ok: false, reason: `Solmu ${key} avattiin ${isoShort(t)}, ennen lukitusta (${isoShort(lock.createdAt)}).` };
+  }
+  return { ok: true, reason: `Lukitus ${isoShort(lock.createdAt)} koskee reitin koodeja ja tehtiin ennen reitin π-solmujen avaamista.` };
+}
+
+/**
+ * Tallennettavan reitin hypoteesitieto. 'ennen-löydöstä' hyväksytään vain lukituksella, joka kelpaa juuri tälle
+ * reitille (lockFitsRoute); muuten pyyntö muutetaan muotoon 'löydön-jälkeen' ja syy kerrotaan. Tehtävänannosta
+ * johdettu reitti on aina 'löydön-jälkeen'.
  */
 export function savedRouteHypothesis(
   requested: HypothesisTiming,
   lock: RouteLock | null,
-  runs: RouteRunSummary[],
+  history: RouteHistory,
   nowIso: string,
+  ctx: SaveRouteContext,
 ): { meta: HypothesisMeta; downgraded: string | null } {
+  const later = HYPOTHESIS_LABELS['löydön-jälkeen'].toLowerCase();
   if (requested === 'ennen-löydöstä') {
-    const v = lock ? evaluateRouteTiming(lock, runs, lock.codes, lock.order, lock.datasetSha) : null;
-    if (lock && v?.preregistered)
+    const fit = lock ? lockFitsRoute(lock, history, ctx) : null;
+    if (lock && fit?.ok)
       return {
-        meta: { timing: 'ennen-löydöstä', statedAt: lock.createdAt, lockHash: lock.hash, note: `Lukittu hypoteesi: ${lock.text}` },
+        meta: { timing: 'ennen-löydöstä', statedAt: lock.createdAt, lockHash: lock.hash, note: `Lukittu hypoteesi (tällä laitteella): ${lock.text}` },
         downgraded: null,
       };
-    const why = lock
-      ? v!.reason
-      : 'Valittuna ei ole lukittua hypoteesia. Lukitse hypoteesi Reitit-sivulla ennen saman reittikysymyksen ensimmäistä ajoa.';
+    const why = fit
+      ? fit.reason
+      : 'Valittuna ei ole lukittua hypoteesia. Lukitse hypoteesi Reitit-sivulla ennen reitin avaamista ja ennen saman koodijoukon ensimmäistä ajoa.';
     return {
       meta: { timing: 'löydön-jälkeen', statedAt: nowIso, lockHash: null, note: why },
-      downgraded: `”${HYPOTHESIS_LABELS['ennen-löydöstä']}” edellyttää SHA-256-lukitusta ennen ensimmäistä ajoa. ${why} Reitti merkitään: ${HYPOTHESIS_LABELS['löydön-jälkeen'].toLowerCase()}.`,
+      downgraded: `”${HYPOTHESIS_LABELS['ennen-löydöstä']}” edellyttää tämän reitin koodien SHA-256-lukitusta ennen reitin avaamista ja ensimmäistä ajoa. ${why} Reitti merkitään: ${later}.`,
     };
   }
+  if (requested === 'ei-tiedossa') {
+    const task = taskDerivedReason(
+      routeCodesFromTrail(ctx.trail, ctx.story).map((c) => c.code),
+      ctx.story,
+    );
+    if (task)
+      return {
+        meta: { timing: 'löydön-jälkeen', statedAt: nowIso, lockHash: null, note: task },
+        downgraded: `${task} Reitti merkitään: ${later}.`,
+      };
+  }
   return { meta: { timing: requested, statedAt: nowIso, lockHash: null, note: '' }, downgraded: null };
+}
+
+/**
+ * Polun lähde ja ajoitus tallennettaessa. Uusi polku: käyttäjän, 'ei-tiedossa'. Jos olemassa olevan polun askeleita
+ * muutetaan, polku on käyttäjän muokkaama ja muodostettu löydön jälkeen ("muokattu"). Pelkkä otsikon, teeman tai
+ * huomion muutos säilyttää lähteen ja ajoituksen.
+ */
+export function editedPathMeta(initial: StoryPath | null, steps: readonly PathStep[], nowIso: string): Pick<StoryPath, 'source' | 'hypothesis'> {
+  if (!initial)
+    return {
+      source: 'käyttäjä',
+      hypothesis: { timing: 'ei-tiedossa', statedAt: nowIso, lockHash: null, note: 'Käyttäjän lisäämä polku; ajoitusta suhteessa π-löytöihin ei ole lukittu.' },
+    };
+  const same =
+    initial.steps.length === steps.length &&
+    initial.steps.every((s, i) => s.name === steps[i].name && s.personId === steps[i].personId && s.symbol === steps[i].symbol && s.stage === steps[i].stage);
+  if (same) return { source: initial.source, hypothesis: initial.hypothesis };
+  return {
+    source: 'käyttäjä',
+    hypothesis: {
+      timing: 'löydön-jälkeen',
+      statedAt: nowIso,
+      lockHash: null,
+      note:
+        `Muokattu ${isoShort(nowIso)}: askeleita muutettiin (alkuperäinen lähde ${initial.source}, ajoitus ` +
+        `”${HYPOTHESIS_LABELS[initial.hypothesis.timing]}”). Muokattu polku on muodostettu löydön jälkeen.`,
+    },
+  };
 }
 
 // ------------------------------------------------------------------ reitin koodit
@@ -789,7 +1306,8 @@ export function summarizeRouteRun(
 ): RouteRunSummary {
   const p = res.params;
   const picks = res.observed ? res.observed.picks.slice() : null;
-  const verdict = classify(res.pValue, ROUTE_ALPHA, meta.timing.preregistered).verdict;
+  const lockHash = meta.timing.preregistered && meta.lock ? meta.lock.hash : null;
+  const verdict = classifyRouteRun({ pValue: res.pValue, pHigh: res.pHigh, alpha: ROUTE_ALPHA, timing: meta.timing.timing, lockHash }).verdict;
   return {
     id: meta.id,
     ts: meta.ts,
@@ -823,7 +1341,7 @@ export function summarizeRouteRun(
     timing: meta.timing.timing,
     timingReason: meta.timing.reason,
     lockId: meta.timing.preregistered && meta.lock ? meta.lock.id : null,
-    lockHash: meta.timing.preregistered && meta.lock ? meta.lock.hash : null,
+    lockHash,
     definition: res.definition,
     durationMs: res.durationMs,
   };

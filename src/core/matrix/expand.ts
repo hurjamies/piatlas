@@ -21,6 +21,7 @@ import {
   glossContextLabel,
   glossesFor,
   homonymChronology,
+  homonymOrdinalConflict,
   junction,
   pathsOfName,
   pathsOfPerson,
@@ -74,6 +75,7 @@ export const GROUPS = {
   glosses: 'Tulkinnat',
   otherGlosses: 'Saman symbolin muut tulkinnat',
   glossContext: 'Tulkinnan konteksti',
+  storyGlosses: 'Tarinan yleistulkinnat',
   allHits: (k: number) => `Kaikki osumat (${k})`,
   nearestAnchor: 'Lähin osuma ankkuriin',
   sameCode: 'Saman koodin osumat suunnassa',
@@ -93,7 +95,8 @@ export const GROUPS = {
   symbolMatch: 'Merkkijonon yhtäläisyys',
   relations: 'Suhteet',
   events: 'Tapahtumat',
-  linkedHits: 'Linkitetyt osumat',
+  /** Käyttäjän tapahtumaan linkittämät π-kohdat (symbolinen: linkin on tehnyt käyttäjä, osumaa ei tarkisteta). */
+  linkedHits: 'Linkitetyt kohdat',
   eventOrder: 'Tapahtumat ajassa',
 } as const;
 
@@ -410,6 +413,25 @@ function expandRoot(ref: NodeRef, c: Ctx): NodeInfo {
       relation: `Ensimmäinen testireitti: MAX (${maxCode})${tail}`,
       trace: `Tehtävänannon ensimmäinen testireitti (docs/MATRIISI.md §9): ${t9Trace('MAX')}; numero 2 = koodin ${maxCode} toinen portti; tulkinta ${g ? `"${g.id}"` : 'puuttuu'}. Reitin valinta on käyttäjän.`,
     });
+  }
+
+  // Tarinan yleistulkinnat (konteksti 'tarina'): muuten esim. 23 ja 43 eivät olisi avattavissa mistään.
+  for (const g of c.model.glosses)
+    if (g.context.kind === 'tarina') addGlossEdge(c, g, GROUPS.storyGlosses, `tarinan yleistulkinta: ${glossText(g)}`);
+
+  // Kaikki tapahtumat aikajärjestyksessä suunnassa (myös ne, joita ei ole liitetty henkilöön).
+  for (const e of eventsInDirection(c.env.events, c.dir)) {
+    const dated = eventTime(e) !== null;
+    const spec: EdgeSpec = {
+      layer: dated ? 'ajallinen' : 'symbolinen',
+      group: GROUPS.events,
+      relation: `${e.date} · ${e.title}`,
+      trace: dated
+        ? `Käyttäjän tapahtuma "${e.id}" (päivämäärä ${e.date}). Kaikki tapahtumat päivämäärän mukaan; päiväämättömät viimeisinä.`
+        : `Käyttäjän tapahtuma "${e.id}": päivämäärää "${e.date}" ei voi tulkita, joten tapahtuma ei ole aikajärjestyksessä (listattu viimeisenä).`,
+    };
+    if (dated) addDir(c, { kind: 'event', eventId: e.id }, c.dir, 'aika', spec);
+    else add(c, { kind: 'event', eventId: e.id }, spec);
   }
   return node;
 }
@@ -985,6 +1007,17 @@ function expandGloss(ref: Extract<NodeRef, { kind: 'gloss' }>, c: Ctx): NodeInfo
     else c.notes.push(`Tulkinnan kontekstipolku "${g.context.pathId}" puuttuu (poistettu).`);
   }
 
+  // Moninumeroinen symboli (esim. 23) on myös numerojono: sen koodisolmu listaa osumat lähdeaineistosta.
+  // Yksinumeroiset symbolit avautuvat numeroporttien kautta.
+  const sym = g.symbol.trim();
+  if (/^\d{2,}$/.test(sym))
+    add(c, { kind: 'code', code: sym }, {
+      layer: 'matemaattinen',
+      group: GROUPS.code,
+      relation: `numerojono ${sym} koodina (osumat π-aineistossa)`,
+      trace: `Tulkinnan "${g.id}" symboli "${sym}" on ${sym.length}-numeroinen numerojono; koodisolmu ${sym} listaa sen osumat lähdeaineistosta (findAll). Yhteys on vain merkkijonon samuus: tulkinnan merkitykset ovat käyttäjän, eivät π-havaintoja.`,
+    });
+
   for (const { gloss, match } of glossesFor(c.model, g.symbol, g.context)) {
     if (gloss.id === g.id) continue;
     const l = glossContextLabel(c.model, gloss.context);
@@ -1058,6 +1091,9 @@ function expandPerson(ref: Extract<NodeRef, { kind: 'person' }>, c: Ctx): NodeIn
   const label = personLabel(c.model, p);
   const name = normName(p.name);
   const same = personsByName(c.model, name);
+  // Järjestysnumero on kronologinen vain, jos ajanjaksot eivät ole ristiriidassa sen kanssa.
+  const conflict = same.length >= 2 ? homonymOrdinalConflict(c.model, name) : null;
+  if (conflict) c.notes.push(conflict);
   const facts: Fact[] = [
     { label: 'Nimi', value: name, layer: 'symbolinen' },
     { label: 'Näyttönimi', value: label, layer: 'symbolinen' },
@@ -1065,7 +1101,9 @@ function expandPerson(ref: Extract<NodeRef, { kind: 'person' }>, c: Ctx): NodeIn
   if (p.homonymOrdinal != null && same.length >= 2)
     facts.push({
       label: 'Järjestysnumero',
-      value: `${p.homonymOrdinal}/${same.length} — samannimisten kronologinen järjestys (ei symbolinen numero)`,
+      value:
+        `${p.homonymOrdinal}/${same.length} — samannimisten kronologinen järjestys (ei symbolinen numero)` +
+        (conflict ? '; ristiriidassa ajanjaksojen alkupäivien kanssa (ks. huomautukset)' : ''),
       layer: 'ajallinen',
     });
   facts.push(
@@ -1080,7 +1118,7 @@ function expandPerson(ref: Extract<NodeRef, { kind: 'person' }>, c: Ctx): NodeIn
   );
   const subtitle =
     p.homonymOrdinal != null && same.length >= 2
-      ? `henkilö · samannimisistä ${ordinalWord(p.homonymOrdinal)} (kronologinen)`
+      ? `henkilö · samannimisistä ${ordinalWord(p.homonymOrdinal)} (${conflict ? 'järjestysnumero ristiriidassa ajanjaksojen kanssa' : 'kronologinen'})`
       : 'henkilö · tarinakerros';
   const node = nodeInfo(ref, label, subtitle, facts);
   if (!c.full) return node;
@@ -1173,6 +1211,10 @@ function expandHomonyms(ref: Extract<NodeRef, { kind: 'homonyms' }>, c: Ctx): No
     { label: 'Kronologian peruste', value: CHRONOLOGY_LABELS[chron.basis], layer: 'ajallinen' },
     { label: 'Huomio', value: 'Sama nimi ja sama T9-koodi eivät tee henkilöistä samaa henkilöä.', layer: 'symbolinen' },
   ];
+  if (chron.conflict) {
+    facts.push({ label: 'Ristiriita', value: chron.conflict, layer: 'ajallinen' });
+    c.notes.push(chron.conflict);
+  }
   if (chron.persons.length === 1) c.notes.push(`Nimellä ${name} on vain yksi henkilö.`);
   const node = nodeInfo(ref, `${name} · samannimiset (${chron.persons.length})`, 'samannimisten kronologinen verkko', facts);
   if (!c.full) return node;
@@ -1349,15 +1391,17 @@ function expandEvent(ref: Extract<NodeRef, { kind: 'event' }>, c: Ctx): NodeInfo
     const n = i >= 0 ? Number(key.slice(i + 1)) : NaN;
     const termId = i >= 0 ? key.slice(0, i) : key;
     if (!Number.isInteger(n) || n < 1 || n > c.N) {
-      c.notes.push(`Linkitettyä osumaa "${key}" ei voi avata: kohta ei ole aineistossa.`);
+      c.notes.push(`Linkitettyä kohtaa "${key}" ei voi avata: kohta ei ole aineistossa.`);
       continue;
     }
+    // Linkin tapahtumasta π-kohtaan on tehnyt käyttäjä: yhteys on symbolinen, ei π-datasta laskettu. Termin koodi ei
+    // ole matriisin tiedossa, joten osumaa ei voi tarkistaa (verified = null). Tarkistetut osumat näkyvät kohtasolmussa.
     add(c, { kind: 'position', n }, {
-      layer: 'matemaattinen',
+      layer: 'symbolinen',
       group: GROUPS.linkedHits,
-      relation: `käyttäjän linkittämä osuma ${termId} @${fmtIndex(n)}`,
-      trace: `käyttäjän linkki "${key}" (hakutermi "${termId}"; termin koodi ei ole matriisin tiedossa, joten linkki avataan π-indeksinä ${n}).`,
-      verified: true,
+      relation: `käyttäjän linkittämä kohta ${termId} @${fmtIndex(n)}`,
+      trace: `Käyttäjän linkki "${key}" (hakutermi "${termId}"): linkin on tehnyt käyttäjä, sitä ei ole laskettu π-aineistosta. Termin koodi ei ole matriisin tiedossa, joten osumaa ei tarkisteta; linkki avataan π-indeksinä ${n} (kohta on aineistossa, 1 ≤ n ≤ ${c.N}).`,
+      verified: null,
     });
   }
 

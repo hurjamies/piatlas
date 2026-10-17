@@ -157,7 +157,7 @@ export function HitDetails({ termId, n, compact = false }: { termId: string; n: 
             <button
               className="btn small"
               onClick={() => openMatrixAtHit(termId, n)}
-              title="Avaa osuma tarinamatriisissa: juuri → koodi → osuma"
+              title="Avaa osuma tarinamatriisissa: tyhjällä polulla juuri → koodi → osuma, muuten nykyisen polun loppuun"
               data-testid="hit-open-matrix"
             >
               Matriisi

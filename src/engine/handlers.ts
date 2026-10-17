@@ -1,6 +1,13 @@
 // Moottorin käsittelijät. Sama koodi ajetaan Web Workerissa tai varapolkuna pääsäikeessä.
 
+import { fmtInt } from '../core/matrix/ops369';
 import { RouteTestParams, RouteTestResult, runRouteTest } from '../core/matrix/route-test';
+import { blindRandomSource, runBlindTest } from '../core/path/blind';
+import type { IdentifierContext } from '../core/path/identifiers';
+import { PathNullArgs, PathNullResult, runPathNull } from '../core/path/score';
+import { searchPaths } from '../core/path/search';
+import { piSource } from '../core/path/source';
+import type { BlindItem, BlindParams, BlindResult, PathParams, PathQuery, SearchMode, SearchOutcome } from '../core/path/types';
 import { findAllDetailed, findSkip, startPositions } from '../core/search';
 import { MCParams, MCResult, RandomControlParams, RandomControlResult, RunHooks, runMonteCarlo, runRandomControl } from '../core/stats';
 
@@ -30,7 +37,10 @@ export type EngineRequest =
   | { type: 'search'; specs: SearchSpec[]; limit?: number }
   | { type: 'monteCarlo'; params: MCParams }
   | { type: 'randomControl'; params: RandomControlParams }
-  | { type: 'routeTest'; params: RouteTestParams };
+  | { type: 'routeTest'; params: RouteTestParams }
+  | { type: 'pathSearch'; query: PathQuery; params: PathParams; mode: SearchMode; ctx: IdentifierContext }
+  | ({ type: 'pathNull' } & PathNullArgs)
+  | { type: 'blindTest'; items: BlindItem[]; params: BlindParams; ctx: IdentifierContext | null };
 
 export type EngineResponse<R extends EngineRequest> = R extends { type: 'ping' }
   ? 'pong'
@@ -44,7 +54,13 @@ export type EngineResponse<R extends EngineRequest> = R extends { type: 'ping' }
           ? RandomControlResult
           : R extends { type: 'routeTest' }
             ? RouteTestResult
-            : never;
+            : R extends { type: 'pathSearch' }
+              ? SearchOutcome
+              : R extends { type: 'pathNull' }
+                ? PathNullResult
+                : R extends { type: 'blindTest' }
+                  ? BlindResult
+                  : never;
 
 export interface EngineState {
   digits: string;
@@ -91,5 +107,30 @@ export async function handleRequest(state: EngineState, req: EngineRequest, hook
       return runRandomControl(req.params, state.digits, hooks);
     case 'routeTest':
       return runRouteTest(req.params, hooks);
+    case 'pathSearch': {
+      // Osumalähde = moottorin π-aineisto. Tyhjä aineisto → searchPaths palauttaa tilan 'virhe' syineen.
+      const label = `π-desimaalit (N = ${fmtInt(state.digits.length)})`;
+      return searchPaths(req.query, req.params, req.mode, piSource(state.digits, label), req.ctx, { hooks });
+    }
+    case 'pathNull': {
+      // Satunnaisvertailu (Path Score): sama haku nollamalleissa + π-haun toistettavuus moottorin π-aineistosta.
+      const { type: _type, ...args } = req;
+      void _type;
+      return runPathNull(args, state.digits, hooks);
+    }
+    case 'blindTest': {
+      // Sokkotesti: π-aineisto + piittömät satunnaisjonot (sama N, siemen johdettu params.seedistä ja jonon indeksistä).
+      // Tyhjä aineisto → kaikki kohteet ohitetaan syineen.
+      const N = state.digits.length;
+      const label = `π-desimaalit (N = ${fmtInt(N)})`;
+      return runBlindTest(
+        req.items,
+        req.params,
+        () => piSource(state.digits, label),
+        (i) => blindRandomSource(N, req.params.seed, i),
+        req.ctx,
+        hooks,
+      );
+    }
   }
 }

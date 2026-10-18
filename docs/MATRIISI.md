@@ -282,7 +282,7 @@ Tila on `src/state/matrix.ts` (puhtaat apufunktiot: tallennus ja lataus, π-fakt
 Välilehti on alapalkin viides, ja sen voi avata suoraan osoitteella `#matriisi`.
 
 Näkymän järjestys ylhäältä alas: murupolku (pysyy ylhäällä vieritettäessä), alasivut (Verkko / Lista, Tarina,
-Reitit, Loki), kerrosvaihdon ilmoitus, solmuvalitsin, ohjaus, fokussolmu, juuressa lähtötunnisteiden tarkistus, 369- ja
+Reitit, Loki sekä Path Discoveryn Etsi reitti ja Sokkotesti, ks. [POLKUHAKU.md](POLKUHAKU.md)), kerrosvaihdon ilmoitus, solmuvalitsin, ohjaus, fokussolmu, juuressa lähtötunnisteiden tarkistus, 369- ja
 hyppysääntötulokset, tarinarakenteet (haarat, samannimisten kronologia, polun symbolinen numerojono),
 verkkokuva ja kaikki yhteydet listana.
 

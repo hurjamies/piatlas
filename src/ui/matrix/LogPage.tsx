@@ -5,7 +5,7 @@ import type { MatrixLogKind } from '../../core/matrix/types';
 import { useApp } from '../../state/store';
 import { fmtDateTime } from '../format';
 
-const KINDS: MatrixLogKind[] = ['avaus', 'suunta', '369', 'hyppy', 'tallennus', 'vertailu', 'tarkistus', 'tarina'];
+const KINDS: MatrixLogKind[] = ['avaus', 'suunta', '369', 'hyppy', 'tallennus', 'vertailu', 'tarkistus', 'tarina', 'polkuhaku', 'sokkotesti'];
 const SHOWN = 60;
 
 export function LogPage() {
@@ -20,8 +20,9 @@ export function LogPage() {
     <section className="section" aria-label="Matriisin loki" data-testid="matrix-log">
       <div className="eyebrow">Matriisin loki</div>
       <div className="mx-small faint">
-        Tutkimuksen kannalta olennaiset merkinnät (369, hyppysäännöt, reittitestit, lukitukset, tallennukset ja tarinan
-        muokkaukset) kirjataan myös yhteiseen muutoshistoriaan (Testit → Vienti). Laitteelle tallentuu 500 uusinta.
+        Tutkimuksen kannalta olennaiset merkinnät (369, hyppysäännöt, reittitestit, lukitukset, tallennukset, tarinan
+        muokkaukset, polkuhaut, satunnaisvertailut ja sokkotestit) kirjataan myös yhteiseen muutoshistoriaan (Testit → Vienti).
+        Laitteelle tallentuu 500 uusinta.
       </div>
       <div className="mx-code-chips" role="group" aria-label="Suodata lajin mukaan">
         <button type="button" className="toggle" aria-pressed={kind === null} onClick={() => setKind(null)}>

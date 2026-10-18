@@ -389,7 +389,7 @@ export interface SavedRoute {
   matrixVersion: string;
 }
 
-export type MatrixLogKind = 'avaus' | 'suunta' | '369' | 'hyppy' | 'tallennus' | 'vertailu' | 'tarkistus' | 'tarina';
+export type MatrixLogKind = 'avaus' | 'suunta' | '369' | 'hyppy' | 'tallennus' | 'vertailu' | 'tarkistus' | 'tarina' | 'polkuhaku' | 'sokkotesti';
 
 export interface MatrixLogEntry {
   ts: string;

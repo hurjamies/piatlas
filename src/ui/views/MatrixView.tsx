@@ -1,6 +1,7 @@
 // Matriisi-välilehti: Recursive Story Matrix (docs/MATRIISI.md). Murupolku ylhäällä, solmuvalitsin, ohjaus, fokussolmu,
 // 369- ja hyppysääntötulokset, tarinarakenteet, verkkokuva ja kaikki yhteydet listana. Alasivut: Tarina,
-// Reitit ja Loki. π-data ja symbolinen tarinaverkko pidetään näkyvästi erillään.
+// Reitit, Loki, Etsi reitti (Path Discovery) ja Sokkotesti (docs/POLKUHAKU.md). π-data ja symbolinen tarinaverkko
+// pidetään näkyvästi erillään.
 import { useCallback, useMemo } from 'react';
 import { expand } from '../../core/matrix/expand';
 import type { MatrixEdge } from '../../core/matrix/types';
@@ -12,9 +13,11 @@ import { Crumbs } from '../matrix/Crumbs';
 import { EdgeList } from '../matrix/EdgeList';
 import { FocusCard, IdentifiersCard, RealmBanner } from '../matrix/FocusCard';
 import { useMatrixEnv, useTrailSets } from '../matrix/hooks';
+import { BlindPage } from '../matrix/BlindPage';
 import { LogPage } from '../matrix/LogPage';
 import { NetGraph } from '../matrix/NetGraph';
 import { NodePicker } from '../matrix/NodePicker';
+import { PathPage } from '../matrix/PathPage';
 import { JumpPanel, Ops369Panel } from '../matrix/ResultPanels';
 import { RoutesPage } from '../matrix/RoutesPage';
 import { StoryEditor } from '../matrix/StoryEditor';
@@ -53,8 +56,38 @@ export function MatrixView() {
           <button type="button" className="mx-subbtn" aria-pressed={sub === 'loki'} data-testid="matrix-sub-loki" onClick={() => setMatrixSub(sub === 'loki' ? null : 'loki')}>
             Loki
           </button>
+          <button
+            type="button"
+            className="mx-subbtn"
+            aria-pressed={sub === 'reitinhaku'}
+            data-testid="matrix-sub-reitinhaku"
+            onClick={() => setMatrixSub(sub === 'reitinhaku' ? null : 'reitinhaku')}
+          >
+            Etsi reitti
+          </button>
+          <button
+            type="button"
+            className="mx-subbtn"
+            aria-pressed={sub === 'sokkotesti'}
+            data-testid="matrix-sub-sokkotesti"
+            onClick={() => setMatrixSub(sub === 'sokkotesti' ? null : 'sokkotesti')}
+          >
+            Sokkotesti
+          </button>
         </nav>
-        {sub === 'tarina' ? <StoryEditor /> : sub === 'reitit' ? <RoutesPage /> : sub === 'loki' ? <LogPage /> : <Explorer />}
+        {sub === 'tarina' ? (
+          <StoryEditor />
+        ) : sub === 'reitit' ? (
+          <RoutesPage />
+        ) : sub === 'loki' ? (
+          <LogPage />
+        ) : sub === 'reitinhaku' ? (
+          <PathPage />
+        ) : sub === 'sokkotesti' ? (
+          <BlindPage />
+        ) : (
+          <Explorer />
+        )}
       </div>
     </div>
   );

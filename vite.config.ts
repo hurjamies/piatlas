@@ -21,7 +21,8 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: artifact ? 'dist-artifact' : 'dist',
       emptyOutDir: true,
-      chunkSizeWarningLimit: 1200,
+      // Yksi sovelluspaketti (myös offline- ja artifact-käytössä); Path Discovery -sivut kasvattivat sitä ~100 kB.
+      chunkSizeWarningLimit: 1400,
       assetsInlineLimit: artifact ? 100_000_000 : 4096,
     },
     test: {

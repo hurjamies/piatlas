@@ -38,11 +38,12 @@ import type {
 } from '../core/matrix/types';
 import { HYPOTHESIS_LABELS, MAX_DEPTH, MATRIX_VERSION, nodeKey, normName, parseNodeKey, realmOf } from '../core/matrix/types';
 import { benjaminiHochberg, classify, fmtP, type Verdict, type VerdictInfo } from '../core/stats';
+import { deserializePath, initialPathState, type PathState, type PersistedPath, serializePath } from './path';
 
 // ------------------------------------------------------------------ tyypit
 
 export type MatrixViewMode = 'verkko' | 'lista';
-export type MatrixSub = null | 'tarina' | 'reitit' | 'loki';
+export type MatrixSub = null | 'tarina' | 'reitit' | 'loki' | 'reitinhaku' | 'sokkotesti';
 
 /** Reittitestin hypoteesin lukitus (SHA-256). Vastaa Testit-välilehden esirekisteröintiä. */
 export interface RouteLock {
@@ -177,6 +178,8 @@ export interface MatrixState {
   sub: MatrixSub;
   /** Reittitestin lomake ja käynnissä oleva ajo (vain muistissa). */
   routeTest: RouteTestUi;
+  /** Path Discovery (docs/POLKUHAKU.md): lomake, ajot, tallennetut tulokset ja sokkotestit (src/state/path.ts). */
+  path: PathState;
 }
 
 export const LOG_PERSIST = 500;
@@ -206,6 +209,7 @@ export function initialMatrixState(): MatrixState {
     view: 'verkko',
     sub: null,
     routeTest: initialRouteTestUi(),
+    path: initialPathState(),
   };
 }
 
@@ -245,6 +249,8 @@ export interface PersistedMatrix {
   runIndex: RouteRunIndex;
   locks: RouteLock[];
   view: MatrixViewMode;
+  /** Polkuhaku. Puuttuu vanhasta tallennuksesta: silloin oletukset. */
+  path?: PersistedPath;
 }
 
 export function serializeTrail(trail: TrailStep[]): PersistedStep[] {
@@ -264,6 +270,7 @@ export function serializeMatrix(m: MatrixState): PersistedMatrix {
     runIndex: m.runIndex,
     locks: m.locks,
     view: m.view,
+    path: serializePath(m.path),
   };
 }
 
@@ -280,7 +287,7 @@ const source = (x: unknown): StorySource => (x === 'tehtävänanto' ? 'tehtävä
 
 const LAYERS: readonly Layer[] = ['matemaattinen', 'geometrinen', 'ajallinen', 'symbolinen'];
 const TIMINGS: readonly HypothesisTiming[] = ['ennen-löydöstä', 'löydön-jälkeen', 'ei-tiedossa'];
-const LOG_KINDS: readonly MatrixLogKind[] = ['avaus', 'suunta', '369', 'hyppy', 'tallennus', 'vertailu', 'tarkistus', 'tarina'];
+const LOG_KINDS: readonly MatrixLogKind[] = ['avaus', 'suunta', '369', 'hyppy', 'tallennus', 'vertailu', 'tarkistus', 'tarina', 'polkuhaku', 'sokkotesti'];
 const ORDERS: readonly RouteOrder[] = ['mikä-tahansa', '234', '432'];
 const VERDICTS: readonly Verdict[] = ['ei-poikkeamaa', 'eksploratiivinen', 'lukittu-alle-alfa'];
 
@@ -735,6 +742,8 @@ export function deserializeMatrix(raw: unknown): { state: MatrixState; warnings:
       warnings.push(
         `Reittitestit: ${rc.changed} ajon ajoitus ”${HYPOTHESIS_LABELS['ennen-löydöstä']}” hylättiin (ei vastaavaa lukitusta, ei koodijoukon ensimmäinen ajo tai tehtävänannon reitti).`,
       );
+    const path = deserializePath(raw.path);
+    warnings.push(...path.warnings.map((w) => `Polkuhaku: ${w}`));
     return {
       state: {
         ...base,
@@ -748,6 +757,7 @@ export function deserializeMatrix(raw: unknown): { state: MatrixState; warnings:
         runIndex,
         locks,
         view: raw.view === 'lista' ? 'lista' : 'verkko',
+        path: path.state,
       },
       warnings,
     };

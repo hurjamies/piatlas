@@ -3,8 +3,9 @@
 Versiotunnukset (näkyvät sovelluksessa ja jokaisessa raportissa): kartoitus `PIATLAS-MAP-1.0.0`, koodaukset
 `PIATLAS-ENC-1.0.0`, tilastot `PIATLAS-MC-1.0.0`, avattu verkko `PIATLAS-NET-1.0.0`. Tarinamatriisi:
 `PIATLAS-MATRIX-1.0.0`, 369-avausavain `PIATLAS-369-1.0.0`, hyppysäännöt `PIATLAS-JUMP-1.0.0` ja reittitesti
-`PIATLAS-ROUTE-1.0.0` (ks. luku 9). Jos jokin kaava muuttuu, tunnus vaihtuu, jotta vanhat tulokset voidaan
-toistaa.
+`PIATLAS-ROUTE-1.0.0` (ks. luku 9). Path Discovery: haku `PIATLAS-PATH-1.0.0`, Path Score `PIATLAS-PATHSCORE-1.0.0`
+ja sokkotesti `PIATLAS-BLIND-1.0.0` (ks. luku 10). Jos jokin kaava muuttuu, tunnus vaihtuu, jotta vanhat tulokset
+voidaan toistaa.
 
 ## 1. Indeksointi
 
@@ -130,7 +131,7 @@ on alle 13 % (odotus 5 %), eli testi ei tuota järjestelmällisesti vääriä po
 
 ## 8. Testit
 
-`npm test` ajaa 277 testiä. Tehtävänannon hyväksymiskriteerit:
+`npm test` ajaa 403 testiä (17 tiedostoa, joista Path Discovery 126). Tehtävänannon hyväksymiskriteerit:
 
 | Kriteeri | Testi |
 | --- | --- |
@@ -147,12 +148,13 @@ on alle 13 % (odotus 5 %), eli testi ei tuota järjestelmällisesti vääriä po
 Täyden aineiston testit ohitetaan, jos `public/data/pi_digits_1m.txt` puuttuu. Pienen fixturen
 (2000 ensimmäistä desimaalia) testit ajetaan aina.
 
-`npm run e2e` (Playwright, puhelinkoko 412×915) tekee 66 tarkistusta. Ensimmäiset 22 kattavat ensimmäisen
+`npm run e2e` (Playwright, puhelinkoko 412×915) tekee 86 tarkistusta. Ensimmäiset 22 kattavat ensimmäisen
 version koko käyttötapauksen: ankkurin, MATTI- ja MINI-nimilaput 3D:ssä, napautusvalinnan 3D:ssä, spiraalissa,
 atlaksessa ja verkossa, lähdenumeroiden tarkistuksen, Monte Carlo -testin, esirekisteröinnin,
-satunnaisjonokontrollin, termin lisäyksen ääkkösillä ja tapahtuman linkityksen. Loput 44 käyvät läpi
-tarinamatriisin (luku 9; luettelo: MATRIISI.md, luku 10). Konsolivirheitä ei saa olla. Sama ajetaan myös ilman Web Workeria
-(`PI_ATLAS_NO_WORKER=1`) ja yhden tiedoston julkaisuversiolle.
+satunnaisjonokontrollin, termin lisäyksen ääkkösillä ja tapahtuman linkityksen. Seuraavat 44 käyvät läpi
+tarinamatriisin (luku 9; luettelo: MATRIISI.md, luku 10) ja viimeiset 20 Path Discoveryn (luku 10).
+Konsolivirheitä ei saa olla. Sama ajetaan myös ilman Web Workeria (`PI_ATLAS_NO_WORKER=1`) ja yhden tiedoston
+julkaisuversiolle.
 
 | Kriteeri | Testi |
 | --- | --- |
@@ -160,6 +162,9 @@ tarinamatriisin (luku 9; luettelo: MATRIISI.md, luku 10). Konsolivirheitä ei sa
 | 369, hyppysäännöt ja reittitesti (determinismi, kalibrointi) | `tests/matrix-ops.test.ts`, `tests/matrix-route.test.ts` |
 | Tallennus ja lataus, ajoitussääntö, verkkokuvan asettelu, solmuvalitsin | `tests/matrix-state.test.ts` |
 | Reittitestin tila storessa, lukitus, navigointi (Matriisi-painike, murut, valitsin) | `tests/matrix-actions.test.ts`, `tests/matrix-nav.test.ts` |
+| Polkuhaku: koodaus ja poiminta, säännöt, haku (tarkkuus, determinismi, syyt), täysi aineisto | `tests/path-identifiers.test.ts`, `tests/path-search.test.ts` |
+| Path Score, nollamallit, toistettavuus, kalibrointi; sokkotesti (vuodot, harhauttimet, p-arvo, johtopäätös) | `tests/path-score.test.ts`, `tests/path-blind.test.ts` |
+| Polkuhaun tila: lukitus ennen moottorikutsua, eksploratiivisuus, monivertailu, tallennus ja lataus | `tests/path-state.test.ts` |
 
 ## 9. Tarinamatriisi
 
@@ -187,3 +192,40 @@ Määrittely, solmutyypit, suunnat, 369, hyppysäännöt ja reittitesti: [MATRII
   `visibilitychange`). Virheellinen data korvataan oletuksella kohde kerrallaan.
 - Verkkokuva on SVG. Kehän kulmat valitaan niin, ettei keskilappu peitä solmuja (`ringLayout`,
   `src/ui/matrix/labels.ts`); kuvan korkeus seuraa nimilappujen ulottumaa.
+
+## 10. Path Discovery
+
+Määrittely, säännöt, pysäytysehto, Path Score, sokkotesti, käyttöliittymä ja ensimmäiset tulokset:
+[POLKUHAKU.md](POLKUHAKU.md).
+
+| Osa | Tiedosto |
+| --- | --- |
+| Tyypit, oletusparametrit, versiot | `src/core/path/types.ts` |
+| Tunnisteiden koodaus, poiminta tekstistä, aikarajaus, samat joukot | `src/core/path/identifiers.ts` |
+| Säännöt (särmät), sanastograafi, käänteisyys | `src/core/path/rules.ts` |
+| Haku 234 / 432 / kaksisuuntainen, syyt, sormenjälki | `src/core/path/search.ts` |
+| Kanoninen kysely, `stableStringify`, FNV-1a | `src/core/path/canonical.ts` |
+| Osumalähteet: π, tasajakauma, satunnaisjono | `src/core/path/source.ts` |
+| Satunnaisvertailu ja Path Score | `src/core/path/score.ts` |
+| Sokkotesti ja harhautinnimet | `src/core/path/blind.ts`, `decoy-names.ts` |
+| Moottoripyynnöt `pathSearch`, `pathNull`, `blindTest` | `src/engine/handlers.ts` |
+| Tila, avaimet, eksploratiivisuus, tallennus ja tarkistimet | `src/state/path.ts` |
+| Toiminnot (lukitus, ajot, keskeytys, tallennus, reitti kartoille) | `src/state/path-actions.ts` |
+| Etsi reitti, tulos, reittikartta, Sokkotesti, yhteiset osat | `src/ui/matrix/PathPage.tsx`, `PathResult.tsx`, `PathMap.tsx`, `BlindPage.tsx`, `path-bits.tsx` |
+| Reitti spiraalissa, atlaksessa, verkossa ja 3D:ssä | `src/ui/views/MapView.tsx`, `SpaceView.tsx`, `space-scene.ts`, `src/ui/components/RouteOverlayChip.tsx` |
+
+- Haku, satunnaisvertailu ja sokkotesti ajetaan samassa Web Workerissa kuin muu laskenta, ja varapolulla
+  pääsäikeessä (vertailu ja sokkotesti välitauoin, yksittäinen haku yhtenä palana). Sama siemen antaa saman
+  tuloksen kummassakin. Vain yksi moottorityö kerrallaan koko matriisissa (myös reittitestin kanssa).
+- SHA-256 lasketaan kanonisesta kyselystä ja ajo kirjataan tilaan ”käynnissä” ennen moottorikutsua; tulos
+  kertoo, täsmäsikö moottorin kanoninen kysely lukittuun.
+- Tila tallennetaan matriisin osana samaan `localStorage`-avaimeen (`pi-atlas:v1`, kenttä `matrix.path`):
+  lomake, 300 viimeisintä ajoa, rajaamattomat laskurit ja eksploratiivisuuden hakemisto, 100 tallennettua
+  tulosta ja 200 sokkotestiä. Näytetty tulos, käynnissä oleva työ ja reitin näyttö kartoilla
+  (`AppState.pathOverlay`) ovat vain muistissa. Virheellinen data korvataan oletuksella kohde kerrallaan.
+- Raportin osio `pathDiscovery` sisältää versiot, Path Scoren määritelmän ja vastuuvapauslausekkeen, ajot
+  BH-q:ineen, tallennetut tulokset, sokkotestit ja monivertailun luvut. Matriisin loki käyttää lajeja
+  `polkuhaku` ja `sokkotesti`.
+- Täydellä aineistolla yksi haku kestää tyypillisesti millisekunteja (yksikkötestin raja 1,5 s),
+  satunnaisvertailu R = 50 + 5 jonoa noin 0,1–0,4 s ja seed-tarinan sokkotesti (6 kierrosta, D = 9, 2 jonoa =
+  180 hakua) noin 1 s Node.js:ssä.

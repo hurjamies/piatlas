@@ -66,6 +66,7 @@ import {
   VISITED_MEMORY,
 } from './matrix';
 import { appendHitStep, appendSelected, danglingEventPersons, personLinkLabel } from './matrix-select';
+import { matrixJobBusy } from './path';
 import { store } from './store';
 
 const nowIso = () => new Date().toISOString();
@@ -317,6 +318,13 @@ export async function runRouteTest(
   const s = store.get();
   if (s.matrix.routeTest.running) {
     setRT({ error: 'Reittitesti on jo käynnissä. Odota sen valmistumista tai keskeytä se ensin.' });
+    return null;
+  }
+  // Vain yksi moottorityö kerrallaan: polkuhaku, satunnaisvertailu tai sokkotesti estää reittitestin.
+  const busy = matrixJobBusy(s.matrix);
+  if (busy) {
+    setRT({ error: busy });
+    toast(busy);
     return null;
   }
   const label =

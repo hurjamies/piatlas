@@ -9,6 +9,7 @@ import { select, setMapMode } from '../../state/actions';
 import { useCompanions } from '../../state/derived';
 import { useApp } from '../../state/store';
 import { PanZoomCanvas, PanZoomHandle } from '../components/PanZoomCanvas';
+import { RouteOverlayChip } from '../components/RouteOverlayChip';
 import { fmtN } from '../format';
 
 const DIGIT_COLORS = Array.from({ length: 10 }, (_, d) => `hsl(${(d * 36 + 190) % 360} 45% 62%)`);
@@ -91,6 +92,53 @@ function label(g: CanvasRenderingContext2D, x: number, y: number, text: string, 
   g.fillText(text, x, by + 10);
 }
 
+/**
+ * Polkuhaun reitti (AppState.pathOverlay): murtoviiva solmujen näyttöpisteiden kautta ja numeroidut merkit 1…k.
+ * Piirretään osumien päälle mutta renkaiden ja nimilappujen alle; ei vaikuta osumien valintaan (napautus).
+ */
+function drawRouteOverlay(g: CanvasRenderingContext2D, pts: { sx: number; sy: number }[]) {
+  if (!pts.length) return;
+  g.save();
+  g.strokeStyle = 'rgba(7,11,20,0.85)';
+  g.lineWidth = 5;
+  g.lineJoin = 'round';
+  g.beginPath();
+  pts.forEach((s, i) => (i ? g.lineTo(s.sx, s.sy) : g.moveTo(s.sx, s.sy)));
+  g.stroke();
+  g.strokeStyle = '#f4c56b';
+  g.lineWidth = 2;
+  g.beginPath();
+  pts.forEach((s, i) => (i ? g.lineTo(s.sx, s.sy) : g.moveTo(s.sx, s.sy)));
+  g.stroke();
+  g.font = '700 10px "IBM Plex Mono", ui-monospace, monospace';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  pts.forEach((s, i) => {
+    g.beginPath();
+    g.arc(s.sx, s.sy, 8.5, 0, Math.PI * 2);
+    g.fillStyle = '#f4c56b';
+    g.fill();
+    g.strokeStyle = '#070b14';
+    g.lineWidth = 1.5;
+    g.stroke();
+    g.fillStyle = '#070b14';
+    g.fillText(String(i + 1), s.sx, s.sy + 0.5);
+  });
+  g.restore();
+}
+
+/** Reitin pisteiden rajauslaatikko (maailmakoordinaatit). */
+function bboxOfPoints(ps: Vec2[]) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of ps) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 export function MapView() {
   const mode = useApp((s) => s.mapMode);
   const [portrait, setPortrait] = useState(() => window.innerWidth < window.innerHeight);
@@ -129,6 +177,7 @@ function SpiralMap() {
   const digits = useApp((s) => s.digits);
   const companions = useCompanions();
   const showPath = useApp((s) => s.prefs.showPath);
+  const overlay = useApp((s) => s.pathOverlay);
   const N = digits.length;
   const ref = useRef<PanZoomHandle>(null);
   const [fibSpan, setFibSpan] = useState<'local' | 'all'>('local');
@@ -278,10 +327,16 @@ function SpiralMap() {
           g.fill();
         }
       }
-      // valitun osuman merkkipolku: peräkkäiset numerot kääntyvät 137,5°, joten polku on himmeä katkoviiva
+      // polkuhaun reitti (Näytä spiraalissa)
+      if (overlay) drawRouteOverlay(g, overlay.points.map((p) => {
+        const q = vogel(p.n);
+        return worldToScreen(v, q.x, q.y);
+      }));
+      // valitun osuman merkkipolku: peräkkäiset numerot kääntyvät 137,5°, joten polku on himmeä katkoviiva. Kun
+      // polkuhaun reitti näytetään, merkkipolun numerot 2…L jätetään pois, jotta ne eivät sekoitu reitin solmujen numeroihin.
       const st = terms.find((t) => t.id === sel.termId);
       const sh = hits[sel.termId];
-      if (st && sh && showPath && sh.code.length > 1) {
+      if (st && sh && showPath && !overlay && sh.code.length > 1) {
         const step = st.mode === 'fibSkip' ? FIB[st.fibK ?? 10] : 1;
         const pts = Array.from({ length: Math.min(sh.code.length, 30) }, (_, i) => {
           const p = vogel(sel.n + i * step);
@@ -334,7 +389,7 @@ function SpiralMap() {
           label(g, ss.sx, ss.sy - 6, `${st.label} · ${fmtN(selection.n)}`, '#ffffff');
       }
     },
-    [N, digits, sample, fibList, visTerms, hits, terms, sel.n, sel.termId, selection, anchor, companions, hitAt, showDigits, showPath],
+    [N, digits, sample, fibList, visTerms, hits, terms, sel.n, sel.termId, selection, anchor, companions, hitAt, showDigits, showPath, overlay],
   );
 
   // Oletuksena koko spiraali: ankkuri ja kumppaniosumat näkyvät nimilappuineen.
@@ -395,10 +450,22 @@ function SpiralMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection?.n, selection?.termId]);
 
+  // Uusi reitti: näkymä rajataan reitin solmuihin (valinnan siirron jälkeen, joten reitti näkyy kokonaan).
+  useEffect(() => {
+    if (!overlay || !overlay.points.length) return;
+    const v = ref.current?.getView();
+    if (!v) return;
+    const b = bboxOfPoints(overlay.points.map((p) => vogel(p.n)));
+    // Yläosan työkalurivit (~190 px) ja alapaneeli (~200 px) peittävät osan kankaasta: rajataan väliin jäävään alueeseen.
+    const f = fitView(b, v.width, Math.max(140, v.height - 420), 40);
+    ref.current?.setView({ cx: f.cx, cy: f.cy, scale: Math.min(f.scale, 30) });
+  }, [overlay]);
+
   return (
     <>
       <PanZoomCanvas ref={ref} draw={draw} fit={fit} onTap={onTap} deps={[draw]} minScale={0.15} maxScale={80} testId="spiral-canvas" />
       <div className="overlay-top" style={{ top: 54 }}>
+        <RouteOverlayChip />
         <button className="toggle" onClick={() => ref.current?.fit()}>
           Koko spiraali
         </button>
@@ -437,6 +504,7 @@ function LayoutMap({ kind, portrait }: { kind: 'atlas' | 'net'; portrait: boolea
   const selection = useApp((s) => s.selection);
   const digits = useApp((s) => s.digits);
   const companions = useCompanions();
+  const overlay = useApp((s) => s.pathOverlay);
   const N = digits.length;
   const ref = useRef<PanZoomHandle>(null);
   const layout: Layout = useMemo(
@@ -594,6 +662,8 @@ function LayoutMap({ kind, portrait }: { kind: 'atlas' | 'net'; portrait: boolea
         const q = placeOnLayout(layout, mapIndex(n));
         return worldToScreen(v, q.x, q.y);
       };
+      // polkuhaun reitti (Näytä spiraalissa → vaihdettu atlakseen tai verkkoon)
+      if (overlay) drawRouteOverlay(g, overlay.points.map((p) => place(p.n)));
       for (const c of companions) {
         const t = terms.find((x) => x.id === c.termId);
         if (!t) continue;
@@ -615,7 +685,7 @@ function LayoutMap({ kind, portrait }: { kind: 'atlas' | 'net'; portrait: boolea
           label(g, s.sx, s.sy - 5, `${st.label} · ${fmtN(selection.n)}`, '#ffffff');
       }
     },
-    [layout, sample, visTerms, hits, termPos, terms, anchor, selection, companions, selFace, anchorFace, faceCounts],
+    [layout, sample, visTerms, hits, termPos, terms, anchor, selection, companions, selFace, anchorFace, faceCounts, overlay],
   );
 
   const fit = useCallback((w: number, h: number) => fitView(layout.bbox, w, h - 150, 22), [layout]);
@@ -660,6 +730,11 @@ function LayoutMap({ kind, portrait }: { kind: 'atlas' | 'net'; portrait: boolea
       <div style={{ position: 'absolute', inset: '48px 0 0 0' }}>
         <PanZoomCanvas ref={ref} draw={draw} fit={fit} onTap={onTap} deps={[draw]} minScale={10} maxScale={20000} testId="layout-canvas" />
       </div>
+      {overlay && (
+        <div className="overlay-top" style={{ top: 54 }}>
+          <RouteOverlayChip />
+        </div>
+      )}
       <div className="view-hint">
         {kind === 'atlas'
           ? 'Kahdeksan erillistä kolmiota. Kvadrantin ylä- (z+) ja alapinta (z−) ovat vastakkain yhteisen X–Y-särmän kautta. Piste = barysentriset (|x|,|y|,|z|).'

@@ -2,8 +2,11 @@
 // Käyttö: npm run build && npx vite preview --port 4173 &  sitten  npm run e2e
 // Playwright ei ole projektin riippuvuus: asenna se tarvittaessa (npm i -D playwright) tai aja NODE_PATH=$(npm root -g).
 // Ensimmäiset 22 tarkistusta: MVP-1–3. Sen jälkeen 44 tarinamatriisin tarkistusta (Matriisi-välilehti) 412 px:ssä ja asettelu
-// 360 px:ssä. PI_ATLAS_SHOTS = kuvien kansio (oletus docs/screenshots), PI_ATLAS_SHOTS_360 = 360 px:n kuvat
-// (valinnainen), PI_ATLAS_NO_WORKER=1 = ilman Web Workeria.
+// 360 px:ssä. Lopuksi 20 Path Discovery -tarkistusta (Matriisi → Etsi reitti ja Sokkotesti, docs/POLKUHAKU.md): kysymys
+// tekstistä tunnisteiksi, lukitus ennen tulosta, 234/432/kaksisuuntainen/369, satunnaisvertailu ja Path Score, kolmen osan
+// erottelu, reitti spiraalissa ja 3D:ssä, sokkotesti, tallennus ja asettelu 412 ja 360 px:ssä (kuvat 20–25).
+// PI_ATLAS_SHOTS = kuvien kansio (oletus docs/screenshots), PI_ATLAS_SHOTS_360 = 360 px:n kuvat (valinnainen),
+// PI_ATLAS_NO_WORKER=1 = ilman Web Workeria.
 const path = require('path');
 const fs = require('fs');
 let chromium;
@@ -1189,6 +1192,746 @@ const check = (name, ok, extra = '') => {
   );
   await ctx360.close();
   check('matriisi: ei konsolivirheitä (412 ja 360 px)', errors.length === 0, errors.slice(0, 3).join(' | '));
+
+  // ================================================================== Path Discovery (Etsi reitti, Sokkotesti)
+  // docs/POLKUHAKU.md. Sama 412 px:n sivu jatkuu (tarinassa on AINO ja tapahtumissa Testitapahtuma edellisistä osista).
+  // Kysymys: lähtö {MATTI, HANNA} → tavoite {YHDESSÄ} (7-numeroinen koodi, ei osumia) → lisäksi KOTI (5684), jolla
+  // reitti löytyy. Jokaisen tuloksen kolme osaa (laskettu piin rakenne / käyttäjän symbolinen tulkinta / testattu
+  // ennustetulos) ja lukitus (SHA-256 ennen moottorikutsua) tarkistetaan. Lopuksi asettelu 360 px:ssä uudessa kontekstissa.
+  const pdErrors0 = errors.length;
+  const pdExternal = [];
+  const onPdRequest = (req) => {
+    const u = req.url();
+    if (/^(data|blob):/.test(u)) return;
+    const h = new URL(u).host;
+    if (h !== sameHost && h !== 'fonts.googleapis.com' && h !== 'fonts.gstatic.com') pdExternal.push(u);
+  };
+  page.on('request', onPdRequest);
+  const pdLayout = [];
+  /** Asettelu: vaakaylivuoto (kuten matriisissa) ja välilehtipalkki. */
+  const pdAt = async (p, label) => {
+    const issues = [...(await layoutIssues(p)), ...(await tabbarIssues(p))];
+    pdLayout.push({ label, w: p.viewportSize().width, issues });
+    return issues;
+  };
+  /** Kosketus: syötekenttien fontti ≥ 16 px (ei zoomausta) ja painikkeiden/kenttien korkeus ≥ 40 px. */
+  const pdTouch = (p) =>
+    p.evaluate(() => {
+      const out = [];
+      for (const el of document.querySelectorAll(
+        '[data-testid="path-page"] :is(button, input, select, textarea), [data-testid="blind-page"] :is(button, input, select, textarea)',
+      )) {
+        if (el.type === 'checkbox' || el.classList.contains('mx-link')) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        const name = `${el.tagName.toLowerCase()} ${el.id || el.getAttribute('data-testid') || (el.textContent || '').trim().slice(0, 20)}`;
+        if (r.height < 39.5) out.push(`${name} h=${Math.round(r.height)}`);
+        if (el.tagName !== 'BUTTON' && parseFloat(getComputedStyle(el).fontSize) < 16) out.push(`${name} fontti ${getComputedStyle(el).fontSize}`);
+      }
+      return [...new Set(out)];
+    });
+  const pdTouchLog = [];
+  const chipsOf = (p, slug) =>
+    p.$$eval(`[data-testid="path-chips-${slug}"] [data-testid="path-chip"]`, (els) =>
+      els.map((e) => `${e.querySelector('.pd-chip-name')?.textContent.trim()} ${e.getAttribute('data-code')}`),
+    );
+  /** Tunnisteen lisäys lomakkeella: palauttaa esikatselun (koodi ja koodaussääntö) ennen lisäystä. */
+  const addIdent = async (p, slug, kind, value, beforeAdd) => {
+    await p.click(`[data-testid="path-add-toggle-${slug}"]`);
+    await p.waitForSelector('[data-testid="path-add-form"]');
+    await p.selectOption('#path-id-kind', kind);
+    await p.fill('#path-id-value', value);
+    await p.waitForTimeout(120);
+    const preview = norm(await p.textContent('[data-testid="path-id-preview"]'));
+    if (beforeAdd) await beforeAdd();
+    await p.click('[data-testid="path-id-add"]');
+    await p.waitForSelector('[data-testid="path-add-form"]', { state: 'detached', timeout: 5000 });
+    return preview;
+  };
+  const panelHash = async (p) => {
+    await p.waitForFunction(() => /^[0-9a-f]{64}$/.test((document.querySelector('[data-testid="path-hash"] .mono')?.textContent || '').trim()), null, {
+      timeout: 10000,
+    });
+    return (await p.textContent('[data-testid="path-hash"] .mono')).trim();
+  };
+  /**
+   * Lukitus ennen tulosta: MutationObserver kirjaa, näkyikö ajo historiassa tilassa ”käynnissä” tiivisteineen ennen kuin
+   * tulos tällä tiivisteellä näytettiin. Tiiviste lasketaan ja ajo kirjataan ennen moottorikutsua (path-actions.ts).
+   */
+  const watchLock = (p) =>
+    p.evaluate(() => {
+      window.__pdLock = [];
+      const mo = new MutationObserver(() => {
+        const rows = [...document.querySelectorAll('[data-testid="path-history-row"], [data-testid="blind-history-row"]')].map((r) => r.textContent);
+        const res = `${document.querySelector('[data-testid="path-run-hash"]')?.textContent || ''}|${document.querySelector('[data-testid="blind-summary"]')?.textContent || ''}`;
+        window.__pdLock.push({ rows, res });
+      });
+      mo.observe(document.querySelector('[data-testid="matrix-view"]'), { childList: true, subtree: true, characterData: true });
+      window.__pdLockStop = () => mo.disconnect();
+    });
+  const lockedBeforeResult = (p, hash) =>
+    p.evaluate((h) => {
+      window.__pdLockStop?.();
+      return (window.__pdLock || []).some((e) => e.rows.some((r) => r.includes(h.slice(0, 10)) && /käynnissä/.test(r)) && !e.res.includes(h.slice(0, 24)));
+    }, hash);
+  /** Ajaa haun painikkeella ja odottaa uutta tulosta (tiiviste vaihtuu, työ päättyy). */
+  const runSearch = async (p, testId) => {
+    const prev = await p.evaluate(() => document.querySelector('[data-testid="path-run-hash"] .mono')?.textContent || '');
+    await watchLock(p);
+    await p.click(`[data-testid="${testId}"]`);
+    await p.waitForFunction(
+      (prev) => {
+        const h = document.querySelector('[data-testid="path-run-hash"] .mono')?.textContent || '';
+        return h && h !== prev && !document.querySelector('[data-testid="path-running"]');
+      },
+      prev,
+      { timeout: 60000 },
+    );
+    await p.waitForTimeout(250);
+    const lock = norm(await p.textContent('[data-testid="path-run-hash"]'));
+    const h24 = (lock.match(/[0-9a-f]{24}/) || [''])[0];
+    return { lock, h24, locked: h24 ? await lockedBeforeResult(p, h24) : false };
+  };
+  const resultInfo = (p) =>
+    p.evaluate(() => {
+      const t = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      const res = document.querySelector('[data-testid="path-result"]');
+      if (!res) return null;
+      return {
+        pills: [...res.querySelectorAll('.pd-result-head .pill')].map((e) => t(e.textContent)),
+        status: t(res.querySelector('[data-testid="path-status"]')?.textContent),
+        exploratory: t(res.querySelector('[data-testid="path-exploratory"]')?.textContent),
+        reasons: t(res.querySelector('[data-testid="path-reasons"]')?.textContent),
+        lock: t(res.querySelector('[data-testid="path-run-hash"]')?.textContent),
+        vocab: [...res.querySelectorAll('[data-testid="path-vocab"] tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => t(c.textContent))),
+        reached: t(res.querySelector('[data-testid="path-reached"]')?.textContent),
+        steps: [...res.querySelectorAll('[data-testid="path-step"]')].map((e) => ({
+          text: t(e.textContent),
+          formula: t(e.querySelector('[data-testid="path-step-formula"]')?.textContent),
+          digits: t(e.querySelector('.pd-digits')?.textContent),
+          ok: !!e.querySelector('.mx-chip.ok'),
+          side: t(e.querySelector('.pd-side-chip')?.textContent),
+          t369: e.classList.contains('t369'),
+          muunnos: /369-muunnos/.test(e.textContent),
+          rule369: /369 · /.test(e.querySelector('.mx-chips')?.textContent || ''),
+        })),
+        routes: res.querySelectorAll('[data-testid="path-route"]').length,
+        meet: [...res.querySelectorAll('[data-testid="path-route"] .mx-chip.gold')].map((e) => t(e.textContent)),
+        mapEdges: [...res.querySelectorAll('[data-testid="path-map"] line.pd-edge')].map((e) => e.getAttribute('class')),
+        computed: t(res.querySelector('[data-testid="path-sep-computed"]')?.textContent),
+        computedTitle: t(res.querySelector('[data-testid="path-sep-computed"] .pd-sep-title')?.textContent),
+        symbolic: t(res.querySelector('[data-testid="path-sep-symbolic"]')?.textContent),
+        symbolicTitle: t(res.querySelector('[data-testid="path-sep-symbolic"] .pd-sep-title')?.textContent),
+        symbolicKv: Object.fromEntries(
+          [...res.querySelectorAll('[data-testid="path-sep-symbolic"] dt')].map((d) => [t(d.textContent), t(d.nextElementSibling?.textContent)]),
+        ),
+        tested: t(res.querySelector('[data-testid="path-tested"]')?.textContent),
+        testedTitle: t(res.querySelector('[data-testid="path-tested"] .pd-sep-title')?.textContent),
+        testedBody: t([...(res.querySelector('[data-testid="path-tested"]')?.children || [])].slice(1).map((e) => e.textContent).join(' ')),
+      };
+    });
+  /** Avain–arvo-parit kv-listasta (dt → dd). */
+  const kvOf = (p, sel) =>
+    p.$$eval(`${sel} dt`, (dts) => Object.fromEntries(dts.map((d) => [d.textContent.replace(/\s+/g, ' ').trim(), (d.nextElementSibling?.textContent || '').replace(/\s+/g, ' ').trim()])));
+  /** Nimettyjen ehtojen epäonnistuneet nimet (tarkistuksen lisätieto). */
+  const failedOf = (o) => Object.entries(o).filter(([, v]) => !v).map(([k]) => `✕ ${k}`).join(', ');
+  /** Askel on todennettu: kaava, π-indeksi n, molempien solmujen numerot ✓ ja ✓ tarkistettu -merkki. */
+  const stepOk = (s) =>
+    s.ok &&
+    !!s.formula &&
+    /@\d/.test(s.text) &&
+    /^π\[[\d\s ]+…\] = (\d+) ✓ · π\[[\d\s ]+…\] = (\d+) ✓$/.test(s.digits) &&
+    !/✗/.test(s.text);
+
+  await page.click('[data-testid="tab-matrix"]');
+  await page.waitForSelector('[data-testid="matrix-view"]', { timeout: 20000 });
+  await page.click('[data-testid="matrix-sub-reitinhaku"]');
+  await page.waitForSelector('[data-testid="path-page"]');
+  await page.waitForTimeout(250);
+  await pdAt(page, 'Etsi reitti: tyhjä lomake');
+  pdTouchLog.push({ label: 'Etsi reitti 412', issues: await pdTouch(page) });
+
+  // 1. Teksti → tunnetut nimet: sama joukko kummallakin puolella → varoitus.
+  await page.fill('#path-start', 'Matti ja Hanna eivät ole parisuhteessa');
+  await page.fill('#path-goal', 'Matti ja Hanna ovat palanneet yhteen');
+  await page.click('[data-testid="path-extract-start"]');
+  await page.click('[data-testid="path-extract-goal"]');
+  await page.waitForTimeout(200);
+  const startChips = await chipsOf(page, 'start');
+  const goalChips0 = await chipsOf(page, 'goal');
+  const sameWarn = norm(await page.textContent('[data-testid="path-same-warning"]').catch(() => ''));
+  check(
+    'polkuhaku: ”Poimi tunnetut nimet” → MATTI ja HANNA kummallekin puolelle, varoitus samasta tunnistejoukosta',
+    startChips.join(',') === 'MATTI 62884,HANNA 42662' &&
+      goalChips0.join(',') === 'MATTI 62884,HANNA 42662' &&
+      /Lähtö- ja tavoitetila koodautuvat samaksi tunnistejoukoksi \(MATTI, HANNA\), joten haku ei voi erottaa niitä\./.test(sameWarn),
+    `${startChips.join(', ')} → ${goalChips0.join(', ')} · ${sameWarn.slice(0, 70)}`,
+  );
+  await pdAt(page, 'poiminta ja varoitus');
+
+  // 2. Tavoitteelle oma tunniste: sana YHDESSÄ (T9 näkyy ennen lisäystä).
+  while (await page.$('[data-testid="path-chips-goal"] [data-testid="path-chip-remove"]')) {
+    await page.click('[data-testid="path-chips-goal"] [data-testid="path-chip-remove"]');
+    await page.waitForTimeout(80);
+  }
+  const yPreview = await addIdent(page, 'goal', 'sana', 'Yhdessä', () => pdAt(page, 'lisäyslomake'));
+  const goalChips1 = await chipsOf(page, 'goal');
+  await scrollTo(page, '[data-testid="path-block-start"]');
+  await page.waitForTimeout(150);
+  await noToast(page);
+  await shot(page, '20-polku-syote');
+  const warnGone = !(await page.$('[data-testid="path-same-warning"]'));
+  check(
+    'polkuhaku: tavoitteeksi sana YHDESSÄ → T9-koodi 9433772 näkyy ennen lisäystä, varoitus poistuu',
+    /^Koodi 9433772 · T9: Y=9 H=4 D=3 E=3 S=7 S=7 Ä=2/.test(yPreview) && goalChips1.join(',') === 'YHDESSÄ 9433772' && warnGone,
+    `${yPreview.slice(0, 60)} · tavoite ${goalChips1.join(', ')}`,
+  );
+
+  // 3. Kaksisuuntainen haku {MATTI, HANNA} → {YHDESSÄ}: 7-numeroisella koodilla ei osumia 1M-aineistossa.
+  const preview1 = norm(await page.textContent('[data-testid="path-explore-preview"]'));
+  const hashY = await panelHash(page);
+  const runY = await runSearch(page, 'path-run-both');
+  const rY = await resultInfo(page);
+  const yRow = rY.vocab.find((r) => r[0] === '9433772') || [];
+  const highlightY = await page.getAttribute('[data-testid="path-run-369"] >> xpath=..', 'data-highlight');
+  const explicitY = rY.pills.includes('Reitti löytyi') || rY.pills.includes('Reittiä ei löytynyt');
+  const outcomeY = rY.pills.includes('Reitti löytyi')
+    ? rY.steps.length > 0 && rY.steps.every(stepOk)
+    : /^Reittiä ei löytynyt näillä tunnisteilla, säännöillä ja parametreilla\. Syyt alla; puuttuvia vaiheita ei täydennetä\./.test(rY.status) &&
+      /^Miksi reittiä ei löytynyt/.test(rY.reasons) &&
+      rY.steps.length === 0;
+  check(
+    'polkuhaku: YHDESSÄ (9433772, 7 numeroa) — tulos kertoo tilan, syyt ”ei osumia” listattu, tiiviste näkyi ennen tulosta',
+    explicitY &&
+      outcomeY &&
+      /Tavoitejoukossa ei ole yhtään käyttökelpoista koodia/.test(rY.reasons) &&
+      /YHDESSÄ 9433772: Koodilla 9433772 \(YHDESSÄ\) ei ole osumia aineistossa/.test(rY.reasons) &&
+      yRow[0]?.length === 7 &&
+      yRow[3] === '0' &&
+      /^✗ Koodilla 9433772 \(YHDESSÄ\) ei ole osumia/.test(yRow[4] || '') &&
+      highlightY === 'true' &&
+      /parametrit lukitaan ennen tulosta/.test(preview1) &&
+      runY.h24 === hashY.slice(0, 24) &&
+      /moottorin kanoninen kysely täsmää ✓/.test(runY.lock) &&
+      runY.locked &&
+      rY.exploratory === 'parametrit lukittu ennen tuloksia',
+    `${rY.pills[0]} · ${yRow.slice(0, 4).join(' | ')} · tiiviste ${hashY.slice(0, 12)}… ennen ajoa, käynnissä ennen tulosta: ${runY.locked}`,
+  );
+  await pdAt(page, 'tulos: ei reittiä');
+
+  // 4. Lisätään 4-numeroinen sana KOTI (5684): todellinen haku ja reitti.
+  const kPreview = await addIdent(page, 'goal', 'sana', 'Koti');
+  const goalChips2 = await chipsOf(page, 'goal');
+  const preview2 = norm(await page.textContent('[data-testid="path-explore-preview"]'));
+  const hashK = await panelHash(page);
+  const runK = await runSearch(page, 'path-run-both');
+  const rK = await resultInfo(page);
+  const kRow = rK.vocab.find((r) => r[0] === '5684') || [];
+  check(
+    'polkuhaku: + KOTI (5684) → kaksisuuntainen haku löytää reitit; jokainen askel: kaava, n ja numerot ✓',
+    /^Koodi 5684 · T9: K=5 O=6 T=8 I=4/.test(kPreview) &&
+      goalChips2.join(',') === 'YHDESSÄ 9433772,KOTI 5684' &&
+      rK.pills[0] === 'Reitti löytyi' &&
+      /^Reittiehdokkaita \d+; paras \d+ askel/.test(rK.status) &&
+      rK.routes >= 1 &&
+      rK.steps.length >= rK.routes &&
+      rK.steps.every(stepOk) &&
+      /lähin 5684-osuma/.test(rK.steps[0]?.formula || '') &&
+      Number((kRow[3] || '').replace(/\D/g, '')) > 0 &&
+      /^✓ solmuina$/.test(kRow[4] || '') &&
+      rK.meet.length === rK.routes &&
+      !/eksploratiivinen/.test(preview2) &&
+      runK.h24 === hashK.slice(0, 24) &&
+      runK.locked &&
+      /moottorin kanoninen kysely täsmää ✓/.test(runK.lock) &&
+      rK.exploratory === 'parametrit lukittu ennen tuloksia',
+    `${rK.status.slice(0, 60)} · ${rK.steps[0]?.formula} · ${rK.steps.length} askelta ✓ · 5684: ${kRow[3]} osumaa`,
+  );
+  await pdAt(page, 'tulos: reitit');
+  await scrollTo(page, '[data-testid="path-result"]');
+  await page.waitForTimeout(150);
+  await noToast(page);
+  await shot(page, '21-polku-reitit');
+  await scrollTo(page, '[data-testid="path-trace"]');
+  await page.waitForTimeout(150);
+  await shot(page, '22-polku-jaljitys');
+  await pdAt(page, 'jäljitys');
+
+  // 5. Pelkkä 432 ja pelkkä 234: tila nimetään ja saavutetut solmut näkyvät.
+  const modeRuns = {};
+  for (const [testId, mode, side] of [
+    ['path-run-432', '432 · tavoitteesta taaksepäin', 'tavoitepuoli 432'],
+    ['path-run-234', '234 · lähdöstä eteenpäin', 'lähtöpuoli 234'],
+  ]) {
+    const run = await runSearch(page, testId);
+    const r = await resultInfo(page);
+    modeRuns[testId] = { r, run };
+    check(
+      `polkuhaku: pelkkä ${mode.slice(0, 3)} → tulos nimeää tilan ja näyttää saavutetut solmut`,
+      r.pills.includes(mode) &&
+        (r.pills.includes('Reitti löytyi') ? r.steps.every(stepOk) : /^Miksi reittiä ei löytynyt/.test(r.reasons)) &&
+        new RegExp(`^Saavutetut solmut \\(${side}\\) ?\\d+ solmua, \\d+ laajennusta, syvin \\d+ askelta`).test(r.reached) &&
+        /Näyte \d+ solmua: syvyys 0: \d+/.test(r.reached) &&
+        r.steps.every((s) => s.side.startsWith(mode.slice(0, 3))) &&
+        run.locked &&
+        r.exploratory === 'parametrit lukittu ennen tuloksia',
+      `${r.pills.slice(0, 2).join(' · ')} · ${r.reached.slice(0, 110)}`,
+    );
+  }
+  await scrollTo(page, '[data-testid="path-reached"]');
+  await pdAt(page, 'saavutetut solmut 234');
+
+  // 6. 369 · tutki vaihtoehtoiset reitit: sama kysely 369-säännöillä. use369 muuttaa parametreja tulosten näkemisen
+  // jälkeen, joten ajo on eksploratiivinen; 369-askeleet ovat muunnoksia.
+  const preview369 = norm(await page.textContent('[data-testid="path-run-369"] >> xpath=..'));
+  const run369 = await runSearch(page, 'path-run-369');
+  const pd369 = await resultInfo(page);
+  const steps369 = pd369.steps.filter((s) => s.rule369);
+  const hist369 = norm(await page.textContent('[data-testid="path-history-row"]'));
+  await page.click('[data-testid="matrix-sub-loki"]');
+  await page.waitForSelector('[data-testid="matrix-log"]');
+  const log369 = norm(await page.textContent('[data-testid="matrix-log"]'));
+  await page.click('[data-testid="matrix-sub-reitinhaku"]');
+  await page.waitForSelector('[data-testid="path-result"]');
+  const c369 = {
+    avain: pd369.pills.includes('369-avain') && pd369.pills.includes('kaksisuuntainen'),
+    muunnokset: steps369.length > 0 && steps369.every((s) => s.muunnos && s.t369 && stepOk(s)),
+    vainMuunnokset: pd369.steps.filter((s) => s.muunnos).length === steps369.length,
+    kartta: pd369.mapEdges.some((c) => /t369/.test(c)),
+    ennakko: /Ajo merkitään: eksploratiivinen \(parametrit muutettu tulosten näkemisen jälkeen\)\./.test(preview369),
+    eksploratiivinen: pd369.exploratory === 'eksploratiivinen (parametrit muutettu tulosten näkemisen jälkeen)',
+    historia: /kaksisuuntainen · 369/.test(hist369) && /eksploratiivinen$/.test(hist369),
+    lokiAlku: /polkuhaku ?369-laajennus \(sama kysely 369-säännöillä\) lukittu ja käynnistetty: .*parametrit muutettu oletuksista \([^)]*use369: false → true/.test(log369),
+    lokiValmis: /369-laajennus \(sama kysely 369-säännöillä\) valmis/.test(log369),
+    lukittu: run369.locked,
+  };
+  check(
+    'polkuhaku: 369 · tutki vaihtoehtoiset reitit — use369 kirjattu, 369-askeleet ovat muunnoksia, ajo eksploratiivinen',
+    Object.values(c369).every(Boolean),
+    `${steps369.length} muunnosaskelta · ${failedOf(c369) || hist369.slice(-60)}`,
+  );
+
+  // 7. Sama kysely alkuperäisillä (lukituilla) asetuksilla: ei eksploratiivinen.
+  await runSearch(page, 'path-run-both');
+  const rBack = await resultInfo(page);
+  check(
+    'polkuhaku: alkuperäisillä lukituilla asetuksilla uudelleen → ”parametrit lukittu ennen tuloksia”',
+    rBack.pills[0] === 'Reitti löytyi' && !rBack.pills.includes('369-avain') && rBack.exploratory === 'parametrit lukittu ennen tuloksia' && rBack.steps.every(stepOk),
+    rBack.exploratory,
+  );
+
+  // 8. Satunnaisvertailu R = 50 ja 5 satunnaisjonoa → p-arvot, toistettavuus ja Path Score vastuuvapauslausekkeineen.
+  await page.selectOption('#path-null-r', '50');
+  await page.selectOption('#path-null-strings', '5');
+  await page.click('[data-testid="path-null-run"]');
+  await page.waitForSelector('[data-testid="path-null-result"]', { timeout: 120000 });
+  await page.waitForSelector('[data-testid="path-null-running"]', { state: 'detached', timeout: 120000 });
+  await page.waitForTimeout(250);
+  const cmp = await page.evaluate(() => {
+    const t = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    return {
+      head: [...document.querySelectorAll('[data-testid="path-null-table"] th')].map((h) => t(h.textContent)),
+      models: [...document.querySelectorAll('[data-testid="path-null-model"]')].map((m) => ({
+        model: m.getAttribute('data-model'),
+        cells: [...m.querySelectorAll('td')].map((c) => t(c.textContent)),
+      })),
+      repro: t(document.querySelector('[data-testid="path-repro"]')?.textContent),
+      scores: [...document.querySelectorAll('[data-testid="path-score"]')].map((s) => ({
+        total: t(s.querySelector('[data-testid="path-score-total"]')?.textContent),
+        disclaimer: t(s.querySelector('[data-testid="path-score-disclaimer"]')?.textContent),
+        text: t(s.textContent),
+      })),
+      routes: document.querySelectorAll('[data-testid="path-route"]').length,
+      hist: t(document.querySelector('[data-testid="path-history-row"]')?.textContent),
+    };
+  });
+  // Sarakkeet: Nollamalli | p | Yhtä hyvä tai parempi | Ei reittiä | 95 % väli (Wilson) | Siemenet alkaen
+  const pOf = (m) => (/^\d(,\d+)?$/.test(m?.cells[1] || '') ? m.cells[1] : null);
+  const tas = cmp.models.find((m) => m.model === 'tasajakauma');
+  const sat = cmp.models.find((m) => m.model === 'satunnaisjono');
+  check(
+    'polkuhaku: satunnaisvertailu R = 50 + 5 jonoa → p-arvot, toistettavuus ✓, Path Score ja ”ei ole todennäköisyys”',
+    cmp.models.length === 2 &&
+      cmp.head.slice(0, 2).join('|') === 'Nollamalli|p' &&
+      /^\d+ \/ 50$/.test(tas?.cells[2] || '') &&
+      /^\d+ \/ 5$/.test(sat?.cells[2] || '') &&
+      /^\d(,\d+)?–\d(,\d+)?$/.test(tas?.cells[4] || '') &&
+      !!pOf(tas) &&
+      !!pOf(sat) &&
+      /^Toistettavuus: kyllä ✓/.test(cmp.repro) &&
+      cmp.scores.length === cmp.routes &&
+      cmp.scores.every((s) => /^\d{1,3} \/ 100$/.test(s.total) && /^Path Score ei ole todennäköisyys sille, että mikään tapahtuu\./.test(s.disclaimer)) &&
+      cmp.scores.every((s) => /Harvinaisuus ?\d,\d+ \(p = \d(,\d+)?, R = 50: suurin p ja suurin R\)/.test(s.text)) &&
+      cmp.scores.every((s) => !/todennäköisyys (on|=)/i.test(s.text)) &&
+      /vertailu.*p = \d(,\d+)?/.test(cmp.hist),
+    `tasajakauma p ${pOf(tas)}, satunnaisjonot p ${pOf(sat)} · Path Score ${cmp.scores.map((s) => s.total).join(', ')}`,
+  );
+  await scrollTo(page, '[data-testid="path-null-result"]', 60);
+  await page.waitForTimeout(150);
+  await noToast(page);
+  await shot(page, '23-polku-vertailu');
+  await pdAt(page, 'satunnaisvertailu');
+
+  // 9. Kolme osaa erillään; ennen sokkotestiä ”Ei testattu”.
+  const rSep = await resultInfo(page);
+  check(
+    'polkuhaku: kolme osaa erillään — laskettu rakenne, symbolinen tulkinta, ”Testattu ennustetulos: Ei testattu”',
+    rSep.computedTitle === 'Laskettu piin rakenne π-data' &&
+      /Reitti 1: \d+@[\d ]+ → /.test(rSep.computed) &&
+      /✓ jokainen askel tarkistettu lähdeaineistosta/.test(rSep.computed) &&
+      /Path Score: reitti 1 \d+ \/ 100/.test(rSep.computed) &&
+      /Path Score ei ole todennäköisyys/.test(rSep.computed) &&
+      !/Matti ja Hanna/.test(rSep.computed) &&
+      rSep.symbolicTitle === 'Käyttäjän symbolinen tulkinta Tarinaverkko' &&
+      rSep.symbolicKv.Lähtötila === 'Matti ja Hanna eivät ole parisuhteessa' &&
+      rSep.symbolicKv.Tavoitetila === 'Matti ja Hanna ovat palanneet yhteen' &&
+      /Tavoite: YHDESSÄ \(sana, käyttäjä\) · Tavoite: KOTI \(sana, käyttäjä\)/.test(rSep.symbolicKv.Tunnisteet || '') &&
+      rSep.testedTitle === 'Testattu ennustetulos' &&
+      /^Ei testattu\. Näillä polkuhaun parametreilla ei ole ajettu sokkotestiä\./.test(rSep.testedBody),
+    `${rSep.testedTitle}: ${rSep.testedBody.slice(0, 70)}`,
+  );
+
+  // 10. Näytä spiraalissa ja 3D:ssä: reitti päällyskerroksena, selitelappu ”Reitti: …”.
+  const errsBeforeOverlay = errors.length;
+  const route1 = await page.$$eval('[data-testid="path-route"]:first-of-type [data-testid="path-open-node"] .mono', (els) => els.map((e) => e.textContent));
+  await scrollTo(page, '[data-testid="path-trace"]');
+  await page.click('[data-testid="path-route"] [data-testid="path-show-spiral"]');
+  await page.waitForSelector('[data-testid="spiral-canvas"]', { timeout: 10000 });
+  await page.waitForSelector('[data-testid="path-overlay-chip"]', { timeout: 5000 });
+  await page.waitForTimeout(900);
+  const spiral = await page.evaluate((nodes) => {
+    const chip = document.querySelector('[data-testid="path-overlay-chip"]');
+    const r = chip.getBoundingClientRect();
+    const c = document.querySelector('[data-testid="spiral-canvas"] canvas');
+    const g = c.getContext('2d');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Reitin solmun kultainen merkki (#f4c56b) piirretty kankaalle: näytteet 5 px:n kehältä solmun ympäriltä.
+    const gold = nodes.map((label) => {
+      const n = Number(label.split('@')[1].replace(/\D/g, ''));
+      const s = window.__piatlasMap.screenOf(n);
+      if (!s || s.x < 0 || s.y < 0 || s.x > c.clientWidth || s.y > c.clientHeight) return false;
+      for (let a = 0; a < 16; a++) {
+        const x = Math.round((s.x + 5 * Math.cos((a * Math.PI) / 8)) * dpr);
+        const y = Math.round((s.y + 5 * Math.sin((a * Math.PI) / 8)) * dpr);
+        const [R, G, B] = g.getImageData(x, y, 1, 1).data;
+        if (R > 210 && G > 165 && G < 225 && B > 70 && B < 150) return true;
+      }
+      return false;
+    });
+    return {
+      text: (chip.textContent || '').replace(/\s+/g, ' ').trim(),
+      inView: r.left >= -1 && r.right <= window.innerWidth + 1,
+      tab: document.querySelector('[data-testid="tab-map"]')?.getAttribute('aria-current'),
+      gold,
+      docW: document.documentElement.scrollWidth,
+    };
+  }, route1);
+  check(
+    'polkuhaku: ”Näytä spiraalissa” → kartta, reittilappu ja kultaiset reittimerkit, ei konsolivirheitä',
+    spiral.tab === 'page' &&
+      /^Reitti: 1\. \S+ @[\d\s ]+ → 2\. /.test(spiral.text) &&
+      spiral.inView &&
+      spiral.docW <= 412 &&
+      spiral.gold.length === route1.length &&
+      spiral.gold.every(Boolean) &&
+      errors.length === errsBeforeOverlay,
+    `${spiral.text.slice(0, 80)} · merkit ${spiral.gold.map((x) => (x ? '✓' : '✗')).join('')}`,
+  );
+  await noToast(page);
+  await shot(page, '24-polku-spiraali');
+  await page.click('[data-testid="tab-matrix"]');
+  await page.waitForSelector('[data-testid="path-trace"]');
+  await scrollTo(page, '[data-testid="path-trace"]');
+  await page.click('[data-testid="path-route"] [data-testid="path-show-3d"]');
+  await page.waitForSelector('[data-testid="space-view"]', { timeout: 10000 });
+  await page.waitForSelector('[data-testid="path-overlay-chip"]', { timeout: 5000 });
+  await page.waitForTimeout(1200);
+  const space = await page.evaluate(() => ({
+    text: (document.querySelector('[data-testid="path-overlay-chip"]')?.textContent || '').replace(/\s+/g, ' ').trim(),
+    labels: [...document.querySelectorAll('.label3d.route')].map((e) => e.textContent.trim()),
+    tab: document.querySelector('[data-testid="tab-space"]')?.getAttribute('aria-current'),
+    docW: document.documentElement.scrollWidth,
+  }));
+  await page.click('[data-testid="path-overlay-close"]');
+  await page.waitForTimeout(250);
+  const chipClosed = !(await page.$('[data-testid="path-overlay-chip"]')) && (await page.$$('.label3d.route')).length === 0;
+  check(
+    'polkuhaku: ”Näytä 3D:ssä” → 3D-näkymä, reittilappu ja numeroidut reittimerkit; sulje poistaa reitin',
+    space.tab === 'page' &&
+      /^Reitti: 1\. /.test(space.text) &&
+      space.labels.join(',') === route1.map((_, i) => String(i + 1)).join(',') &&
+      space.docW <= 412 &&
+      chipClosed &&
+      errors.length === errsBeforeOverlay,
+    `${space.text.slice(0, 70)} · merkit ${space.labels.join(',')}`,
+  );
+
+  // 11. Sokkotesti: tapahtumia ei ole tarpeeksi → ajo estetty syyn kanssa; polun askeleet, D = 9, 2 jonoa → 6 kierrosta.
+  await page.click('[data-testid="tab-matrix"]');
+  await page.waitForSelector('[data-testid="matrix-view"]');
+  await page.click('[data-testid="matrix-sub-sokkotesti"]');
+  await page.waitForSelector('[data-testid="blind-page"]');
+  await page.waitForTimeout(250);
+  await pdAt(page, 'sokkotesti: lomake');
+  pdTouchLog.push({ label: 'Sokkotesti 412', issues: await pdTouch(page) });
+  await page.selectOption('#blind-kind', 'tapahtuma');
+  await page.waitForTimeout(200);
+  const evItems = norm(await page.textContent('[data-testid="blind-items"]'));
+  const evDisabled = await page.isDisabled('[data-testid="blind-run"]');
+  check(
+    'sokkotesti: tapahtumat — alle kaksi päivättyä tapahtumaa → ajo estetty ja syy näkyy',
+    evDisabled && /Käyttökelpoisia kohteita 0 \/ [01] /.test(evItems) && /Tarvitaan vähintään kaksi tapahtumaa kelvollisella päivämäärällä/.test(evItems),
+    evItems.slice(0, 110),
+  );
+  await page.selectOption('#blind-kind', 'polun-askel');
+  await page.fill('#blind-decoys', '9');
+  await page.selectOption('#blind-strings', '2');
+  await page.waitForTimeout(200);
+  const blindItems = norm(await page.textContent('[data-testid="blind-items"]'));
+  await page.waitForFunction(() => /[0-9a-f]{64}/.test(document.querySelector('[data-testid="blind-hash"]')?.textContent || ''), null, { timeout: 10000 });
+  const blindHash = (norm(await page.textContent('[data-testid="blind-hash"]')).match(/[0-9a-f]{64}/) || [''])[0];
+  const blindPreview = norm(await page.textContent('[data-testid="blind-explore-preview"]'));
+  await watchLock(page);
+  await page.click('[data-testid="blind-run"]');
+  await page.waitForFunction(
+    () => document.querySelectorAll('[data-testid="blind-fold"]').length > 0 && !document.querySelector('[data-testid="blind-running"]'),
+    null,
+    { timeout: 180000 },
+  );
+  await page.waitForTimeout(300);
+  const blindLocked = await page.evaluate((h) => {
+    window.__pdLockStop?.();
+    return (window.__pdLock || []).some((e) => e.rows.some((r) => r.includes(h.slice(0, 10)) && /käynnissä/.test(r)) && !/Kierroksia/.test(e.res));
+  }, blindHash);
+  const blind = await page.evaluate(() => {
+    const t = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    return {
+      folds: [...document.querySelectorAll('[data-testid="blind-fold"]')].map((r) => [...r.querySelectorAll('td')].map((c) => t(c.textContent))),
+      verdict: t(document.querySelector('[data-testid="blind-verdict"]')?.textContent),
+      exploratory: t(document.querySelector('[data-testid="blind-exploratory"]')?.textContent),
+    };
+  });
+  const bkv = await kvOf(page, '[data-testid="blind-summary"]');
+  const foldsOk = blind.folds.length === 6 && blind.folds.every((f) => /^(✓ oikein|✗ väärin)$/.test(f[1]) && /^\d+ \/ 10$/.test(f[2]) && f[5].split(', ').length === 2);
+  const blindSum = (bkv['Oikein ensimmäisenä'] || '').split(' (')[0];
+  const blindP = (bkv['p vs. satunnainen valinta'] || '').split(' (')[0];
+  check(
+    'sokkotesti: polun askeleet, D = 9, 2 jonoa → 6 kierrosta (✓/✗ jokaiselle), johtopäätös, lukittu ennen tulosta',
+    /Käyttökelpoisia kohteita 6 \/ 6/.test(blindItems) &&
+      foldsOk &&
+      /^(Ei näyttöä|Sattumaa parempi)/.test(blind.verdict) &&
+      bkv.Kierroksia === '6' &&
+      /^\d+ \/ 6 \(sattuman odotus 0,60\) · väärin \d+$/.test(bkv['Oikein ensimmäisenä'] || '') &&
+      /^\d(,\d+)? \((tarkka|monte-carlo)\)$/.test(bkv['p vs. satunnainen valinta'] || '') &&
+      (bkv['SHA-256'] || '').startsWith(blindHash.slice(0, 24)) &&
+      /^Asetukset lukitaan ennen ajoa\./.test(blindPreview) &&
+      blind.exploratory === 'asetukset lukittu ennen tulosta' &&
+      blindLocked,
+    `oikein ${blindSum}, p = ${blindP} · ${blind.folds.map((f) => `${f[0].split(' ')[0]} ${f[2]} ${f[1][0]}`).join(', ')} · ${blind.verdict.slice(0, 60)}`,
+  );
+  await scrollTo(page, '[data-testid="blind-result"]');
+  await page.waitForTimeout(150);
+  await noToast(page);
+  await shot(page, '25-sokkotesti');
+  await pdAt(page, 'sokkotesti: tulos');
+  await scrollTo(page, '[data-testid="blind-history"]');
+  await pdAt(page, 'sokkotesti: historia');
+
+  // 12. Etsi reitti: ”Testattu ennustetulos” näyttää nyt sokkotestin (samat polkuhaun parametrit), ja monivertailu
+  // laskee haut, satunnaisvertailut ja sokkotestit.
+  await page.click('[data-testid="matrix-sub-reitinhaku"]');
+  await page.waitForSelector('[data-testid="path-tested"]');
+  const tested = norm(await page.textContent('[data-testid="path-tested"]'));
+  check(
+    'polkuhaku: sokkotestin jälkeen ”Testattu ennustetulos” näyttää sokkotestin ”Ei testattu” -tekstin sijaan',
+    /^Testattu ennustetulos ?Sokkotesti .*: oikein \d+\/6 \(sattuman odotus 0,60\), p = \d(,\d+)? satunnaista valintaa vastaan/.test(tested) &&
+      /(Ei näyttöä|Sattumaa parempi)/.test(tested) &&
+      !/Ei testattu/.test(tested),
+    tested.slice(0, 120),
+  );
+  const mcNote = norm(await page.textContent('[data-testid="path-mc-note"]'));
+  const histRows = await page.$$eval('[data-testid="path-history-row"]', (rows) => rows.length);
+  check(
+    'polkuhaku: monivertailu laskee polkuhaut, satunnaisvertailut ja sokkotestit (kuten Reitit-sivu)',
+    /^Polkuhakuja ajettu 6, satunnaisvertailuja 1 ja sokkotestejä 1 \(yhteensä m = 8\)\./.test(mcNote) &&
+      /noin m·α niistä antaa p ≤ α pelkällä sattumalla \(nyt 0,4, kun α = 0,05\)/.test(mcNote) &&
+      /Eksploratiivisia ajoja 1\./.test(mcNote) &&
+      histRows === 7,
+    `${mcNote.slice(0, 90)} · ${histRows} historiariviä`,
+  );
+  await scrollTo(page, '[data-testid="path-history"]');
+  await pdAt(page, 'ajohistoria');
+
+  // 13. Tallennus ja uudelleenlataus: tulos säilyy laitteella.
+  await scrollTo(page, '#path-save-title');
+  await page.fill('#path-save-title', 'Matti ja Hanna → koti');
+  await page.click('[data-testid="path-save"]');
+  await page.waitForSelector('[data-testid="path-saved-item"]');
+  const savedItem = norm(await page.textContent('[data-testid="path-saved-item"]'));
+  await page.waitForFunction(() => /Matti ja Hanna → koti/.test(localStorage.getItem('pi-atlas:v1') || ''), null, { timeout: 5000 }).catch(() => undefined);
+  await page.waitForTimeout(700);
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForSelector('[data-testid="matrix-view"]', { timeout: 30000 });
+  await page.waitForSelector('[data-testid="matrix-sub-reitinhaku"]', { timeout: 30000 });
+  await page.click('[data-testid="matrix-sub-reitinhaku"]');
+  await page.waitForSelector('[data-testid="path-saved"]');
+  const afterReloadPd = await page.evaluate(() => {
+    const t = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    return {
+      saved: [...document.querySelectorAll('[data-testid="path-saved-item"]')].map((e) => t(e.textContent)),
+      chips: [...document.querySelectorAll('[data-testid="path-chip"]')].map((e) => `${e.getAttribute('data-role')}:${e.getAttribute('data-code')}`),
+      hist: document.querySelectorAll('[data-testid="path-history-row"]').length,
+      mc: t(document.querySelector('[data-testid="path-mc-note"]')?.textContent),
+    };
+  });
+  await page.click('[data-testid="path-saved-open"]');
+  await page.waitForSelector('[data-testid="path-result"]');
+  const reopened = await resultInfo(page);
+  check(
+    'polkuhaku: tallennettu tulos näkyy listalla ja säilyy uudelleenlatauksessa (avautuu tallennettuna tuloksena)',
+    /^Matti ja Hanna → koti/.test(savedItem) &&
+      /sokkotesti \d+\/6 oikein/.test(savedItem) &&
+      /Path Score \d+/.test(savedItem) &&
+      afterReloadPd.saved.length === 1 &&
+      afterReloadPd.saved[0] === savedItem &&
+      afterReloadPd.chips.join(' ') === 'lähtö:62884 lähtö:42662 tavoite:9433772 tavoite:5684' &&
+      afterReloadPd.hist === 7 &&
+      /^Polkuhakuja ajettu 6, satunnaisvertailuja 1 ja sokkotestejä 1/.test(afterReloadPd.mc) &&
+      reopened.pills.includes('tallennettu tulos') &&
+      reopened.steps.every(stepOk) &&
+      /Sokkotesti .*: oikein \d+\/6/.test(reopened.tested),
+    `${savedItem.slice(0, 110)} · ${afterReloadPd.hist} ajoa`,
+  );
+  await pdAt(page, 'tallennettu tulos avattu');
+  page.off('request', onPdRequest);
+
+  // 14. 360 px: sama kysely tyhjästä tilasta, vain asettelu ja kosketus.
+  const ctxPd = await browser.newContext({
+    viewport: { width: 360, height: 800 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-A146B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36',
+  });
+  const p4 = await ctxPd.newPage();
+  if (NO_WORKER)
+    await p4.addInitScript(() => {
+      window.Worker = function () {
+        throw new Error('Worker estetty testissä');
+      };
+    });
+  p4.on('pageerror', (e) => errors.push(`360 polku: ${e}`));
+  p4.on('console', (m) => m.type() === 'error' && errors.push(`360 polku: ${m.text()}`));
+  p4.on('request', onPdRequest);
+  const SHOTS360pd = process.env.PI_ATLAS_SHOTS_360;
+  const at360pd = async (label) => {
+    await pdAt(p4, label);
+    if (SHOTS360pd) await p4.screenshot({ path: path.join(SHOTS360pd, `360-polku-${label.replace(/[^a-z0-9]+/gi, '-')}.jpg`), type: 'jpeg', quality: 80 });
+  };
+  await p4.goto(BASE + '#matriisi', { waitUntil: 'load' });
+  await p4.waitForSelector('[data-testid="matrix-identifiers"]', { timeout: 30000 });
+  await p4.click('[data-testid="matrix-sub-reitinhaku"]');
+  await p4.waitForSelector('[data-testid="path-page"]');
+  await at360pd('lomake');
+  await p4.fill('#path-start', 'Matti ja Hanna eivät ole parisuhteessa');
+  await p4.fill('#path-goal', 'Matti ja Hanna ovat palanneet yhteen');
+  await p4.click('[data-testid="path-extract-start"]');
+  await p4.click('[data-testid="path-extract-goal"]');
+  await scrollTo(p4, '[data-testid="path-block-goal"]');
+  await at360pd('poiminta');
+  while (await p4.$('[data-testid="path-chips-goal"] [data-testid="path-chip-remove"]')) {
+    await p4.click('[data-testid="path-chips-goal"] [data-testid="path-chip-remove"]');
+    await p4.waitForTimeout(80);
+  }
+  await addIdent(p4, 'goal', 'sana', 'Yhdessä', () => at360pd('lisayslomake'));
+  await addIdent(p4, 'goal', 'sana', 'Koti');
+  await p4.click('[data-testid="path-params"] > summary');
+  await scrollTo(p4, '[data-testid="path-params"]');
+  await at360pd('parametrit');
+  pdTouchLog.push({ label: 'Etsi reitti 360', issues: await pdTouch(p4) });
+  await runSearch(p4, 'path-run-both');
+  await scrollTo(p4, '[data-testid="path-result"]');
+  await at360pd('tulos');
+  await scrollTo(p4, '[data-testid="path-separation"]');
+  await at360pd('kolme-osaa');
+  await scrollTo(p4, '[data-testid="path-map-wrap"]');
+  await at360pd('reittikartta');
+  await scrollTo(p4, '[data-testid="path-step"]');
+  await at360pd('jaljitys');
+  await p4.selectOption('#path-null-strings', '0');
+  await p4.click('[data-testid="path-null-run"]');
+  await p4.waitForSelector('[data-testid="path-null-result"]', { timeout: 120000 });
+  await p4.waitForSelector('[data-testid="path-null-running"]', { state: 'detached', timeout: 120000 });
+  await scrollTo(p4, '[data-testid="path-score"]');
+  await at360pd('path-score');
+  await scrollTo(p4, '[data-testid="path-vocab"]');
+  await at360pd('sanasto');
+  await runSearch(p4, 'path-run-432');
+  await scrollTo(p4, '[data-testid="path-reached"]');
+  await at360pd('saavutetut');
+  await scrollTo(p4, '[data-testid="path-history"]');
+  await at360pd('historia');
+  await scrollTo(p4, '[data-testid="path-trace"]');
+  await p4.click('[data-testid="path-route"] [data-testid="path-show-spiral"]');
+  await p4.waitForSelector('[data-testid="path-overlay-chip"]', { timeout: 10000 });
+  await p4.waitForTimeout(600);
+  const chip360 = await p4.evaluate(() => {
+    const r = document.querySelector('[data-testid="path-overlay-chip"]').getBoundingClientRect();
+    const tops = [...document.querySelectorAll('.overlay-top > *')].map((e) => e.getBoundingClientRect());
+    return {
+      inView: r.left >= -1 && r.right <= window.innerWidth + 1,
+      topsInView: tops.every((b) => b.left >= -1 && b.right <= window.innerWidth + 1),
+      docW: document.documentElement.scrollWidth,
+    };
+  });
+  pdLayout.push({
+    label: 'spiraali + reittilappu',
+    w: 360,
+    issues: [
+      ...(chip360.inView && chip360.topsInView ? [] : ['reittilappu tai työkalurivi ei mahdu']),
+      ...(chip360.docW > 360 ? [`document.scrollWidth ${chip360.docW}`] : []),
+      ...(await tabbarIssues(p4)),
+    ],
+  });
+  await p4.click('[data-testid="tab-matrix"]');
+  await p4.click('[data-testid="matrix-sub-sokkotesti"]');
+  await p4.waitForSelector('[data-testid="blind-page"]');
+  await at360pd('sokkotesti');
+  pdTouchLog.push({ label: 'Sokkotesti 360', issues: await pdTouch(p4) });
+  await p4.selectOption('#blind-kind', 'tapahtuma');
+  await at360pd('sokkotesti-tapahtumat');
+  await p4.selectOption('#blind-kind', 'polun-askel');
+  await p4.click('[data-testid="blind-run"]');
+  await p4.waitForFunction(
+    () => document.querySelectorAll('[data-testid="blind-fold"]').length > 0 && !document.querySelector('[data-testid="blind-running"]'),
+    null,
+    { timeout: 180000 },
+  );
+  await scrollTo(p4, '[data-testid="blind-result"]');
+  await at360pd('sokkotesti-tulos');
+  await scrollTo(p4, '[data-testid="blind-folds"]');
+  await at360pd('sokkotesti-kierrokset');
+  await scrollTo(p4, '[data-testid="blind-history"]');
+  await at360pd('sokkotesti-historia');
+  await ctxPd.close();
+
+  const badPd = pdLayout.filter((l) => l.issues.length);
+  check(
+    `polkuhaku 412 ja 360 px: ei vaakaylivuotoa, välilehdet mahtuvat (${pdLayout.filter((l) => l.w === 412).length} + ${pdLayout.filter((l) => l.w === 360).length} näkymää)`,
+    !badPd.length,
+    badPd.map((l) => `${l.w} ${l.label}: ${l.issues.slice(0, 2).join('; ')}`).join(' | '),
+  );
+  const badTouch = pdTouchLog.filter((l) => l.issues.length);
+  check(
+    'polkuhaku: kosketus — painikkeet ja kentät ≥ 40 px, syötekenttien fontti ≥ 16 px (412 ja 360 px)',
+    !badTouch.length,
+    badTouch.map((l) => `${l.label}: ${l.issues.slice(0, 3).join('; ')}`).join(' | '),
+  );
+  check(
+    'polkuhaku: ei verkkopyyntöjä sovelluksen ulkopuolelle eikä konsolivirheitä',
+    pdExternal.length === 0 && errors.length === pdErrors0,
+    [...pdExternal.slice(0, 2), ...errors.slice(pdErrors0, pdErrors0 + 3)].join(' | '),
+  );
 
   await browser.close();
   const failed = results.filter((r) => !r.ok).length;

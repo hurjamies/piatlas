@@ -11,6 +11,7 @@ import type {
   TestRun,
 } from '../core/types';
 import { initialMatrixState, type MatrixState } from './matrix';
+import type { PathOverlay } from './path';
 
 export type Tab = 'space' | 'map' | 'digits' | 'tests' | 'matrix';
 export type MapMode = 'spiral' | 'atlas' | 'net';
@@ -68,6 +69,8 @@ export interface AppState {
   toast: { text: string; id: number } | null;
   /** Recursive Story Matrix (docs/MATRIISI.md): tarinamalli, reitti, tallennetut reitit, loki ja reittitestit. */
   matrix: MatrixState;
+  /** Polkuhaun reitti kartoilla ja 3D:ssä (Näytä spiraalissa / Näytä 3D:ssä). Vain muistissa. */
+  pathOverlay: PathOverlay | null;
 }
 
 type Listener = () => void;
@@ -172,6 +175,7 @@ export const store = createStore<AppState>({
   prefs: DEFAULT_PREFS,
   toast: null,
   matrix: initialMatrixState(),
+  pathOverlay: null,
 });
 
 export function useApp<U>(selector: (s: AppState) => U): U {

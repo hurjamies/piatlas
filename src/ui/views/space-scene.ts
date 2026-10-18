@@ -1,5 +1,5 @@
 // Three.js-näkymä oktaedrikartalle. Renderöi vain tarvittaessa (akku), näyttää näytepisteet,
-// termien osumat, ankkurin, valinnan ja valitun osuman merkkipolun.
+// termien osumat, ankkurin, valinnan, valitun osuman merkkipolun ja polkuhaun reitin (setRoute).
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -22,6 +22,13 @@ export interface SceneData {
   showSamples: boolean;
   colorBy: 'term' | 'index';
   window: { center: number; radius: number } | null;
+}
+
+/** Polkuhaun reitin solmut järjestyksessä (π-indeksi n, koodi ja nimi). */
+export interface SceneRoutePoint {
+  n: number;
+  code: string;
+  label: string;
 }
 
 export interface SceneMarks {
@@ -77,6 +84,9 @@ export class SpaceScene {
   private samples: THREE.Points | null = null;
   private termGroup = new THREE.Group();
   private markGroup = new THREE.Group();
+  private routeGroup = new THREE.Group();
+  private route: SceneRoutePoint[] | null = null;
+  private routeAnchors: { key: string; p: THREE.Vector3; text: string }[] = [];
   private data: SceneData | null = null;
   private marks: SceneMarks | null = null;
   private pickItems: { termId: string; n: number; p: THREE.Vector3; r: number }[] = [];
@@ -115,7 +125,7 @@ export class SpaceScene {
     this.controls.maxDistance = 14;
     this.controls.addEventListener('change', () => this.requestRender());
     this.buildOctahedron();
-    this.scene.add(this.termGroup, this.markGroup);
+    this.scene.add(this.termGroup, this.markGroup, this.routeGroup);
     const el = this.renderer.domElement;
     el.addEventListener('pointerdown', this.onDown);
     el.addEventListener('pointerup', this.onUp);
@@ -247,6 +257,50 @@ export class SpaceScene {
       this.termGroup.add(pts);
     }
     if (this.marks) this.setMarks(this.marks);
+    if (this.route) this.buildRoute();
+    this.requestRender();
+  }
+
+  /**
+   * Polkuhaun reitti: viiva mapIndex-pisteiden kautta ja numeroidut merkit 1…k. Ei vaikuta osumien valintaan
+   * (pickItems tulee vain hakutermeistä). null poistaa reitin.
+   */
+  setRoute(points: SceneRoutePoint[] | null) {
+    if (!this.ok) return;
+    this.route = points && points.length ? points : null;
+    this.buildRoute();
+  }
+
+  private buildRoute() {
+    for (const ch of [...this.routeGroup.children]) {
+      this.routeGroup.remove(ch);
+      const o = ch as THREE.Mesh;
+      o.geometry?.dispose();
+      (o.material as THREE.Material)?.dispose?.();
+    }
+    this.routeAnchors = [];
+    if (this.route && this.data) {
+      const pts = this.route.map((r) => {
+        const q = this.mapFn(r.n);
+        return new THREE.Vector3(q.x, q.y, q.z);
+      });
+      if (pts.length > 1) {
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: new THREE.Color('#f4c56b'), transparent: true, opacity: 0.95, depthTest: false }),
+        );
+        line.renderOrder = 60;
+        this.routeGroup.add(line);
+      }
+      const marks = new THREE.Points(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, map: this.disc, color: new THREE.Color('#f4c56b'), transparent: true, depthTest: false }),
+      );
+      marks.renderOrder = 61;
+      this.routeGroup.add(marks);
+      pts.forEach((p, i) => this.routeAnchors.push({ key: `route:${i}`, p, text: String(i + 1) }));
+    }
+    this.syncLabelEls();
     this.requestRender();
   }
 
@@ -366,6 +420,10 @@ export class SpaceScene {
       keep.add(l.key);
       this.ensureLabel(l.key, l.text, l.color, l.cls);
     }
+    for (const r of this.routeAnchors) {
+      keep.add(r.key);
+      this.ensureLabel(r.key, r.text, '', 'route');
+    }
     for (const [k, el] of this.labelEls) {
       if (!keep.has(k)) {
         el.remove();
@@ -412,6 +470,7 @@ export class SpaceScene {
     place('ax:+z', new THREE.Vector3(0, 0, 1.12));
     place('ax:-z', new THREE.Vector3(0, 0, -1.12));
     for (const l of this.labelAnchors) place(l.key, l.p);
+    for (const r of this.routeAnchors) place(r.key, r.p);
     // Nimilaput eivät saa peittää toisiaan: siirretään ylöspäin.
     const boxes: { x: number; y: number; w: number; h: number }[] = [];
     for (const l of this.labelAnchors) {

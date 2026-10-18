@@ -2577,3 +2577,643 @@ svg.chart .grid {
     max-width: 180px;
   }
 }
+
+/* ==================================================================
+   Path Discovery (Etsi reitti ja Sokkotesti, docs/POLKUHAKU.md)
+   Laskettu piin rakenne = turkoosi (π-data), käyttäjän symbolinen tulkinta = ruusu katkoviiva,
+   testattu ennustetulos = kulta. Särmät: matemaattinen turkoosi, geometrinen violetti, 369-muunnos
+   meripihka katkoviiva. Kosketusalueet vähintään 40 px, kentät 16 px.
+   ================================================================== */
+.pd-page {
+  gap: 14px;
+}
+.pd-form {
+  min-width: 0;
+}
+.pd-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.pd-block + .pd-block {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.pd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.pd-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 4px 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  background: var(--bg);
+  font-size: var(--t-sm);
+}
+.pd-chip.r-start {
+  border-color: color-mix(in srgb, var(--teal) 55%, var(--line-2));
+}
+.pd-chip.r-goal {
+  border-color: color-mix(in srgb, var(--gold) 55%, var(--line-2));
+}
+.pd-chip.r-known {
+  border-style: dashed;
+}
+.pd-chip.bad {
+  border-color: color-mix(in srgb, var(--rose) 60%, var(--line-2));
+}
+.pd-chip-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.pd-chip-name {
+  overflow-wrap: anywhere;
+}
+.pd-chip-x {
+  margin-left: auto;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--fg-3);
+  font-size: 20px;
+  line-height: 1;
+}
+.pd-chip-x:active {
+  background: var(--bg-3);
+}
+.pd-chip-code {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  padding-right: 6px;
+}
+.pd-code {
+  color: var(--teal);
+  font-size: 13px;
+}
+.pd-chip-err {
+  color: var(--rose);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  padding-right: 6px;
+}
+.pd-add {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line));
+  background: var(--bg);
+}
+.pd-params {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  padding: 0 12px;
+  min-width: 0;
+}
+.pd-params > summary {
+  min-height: 48px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.pd-params > summary::-webkit-details-marker {
+  display: none;
+}
+.pd-params > summary::after {
+  content: '+';
+  margin-left: auto;
+  color: var(--fg-3);
+}
+.pd-params[open] > summary::after {
+  content: '–';
+}
+.pd-params-title {
+  font-weight: 600;
+}
+.pd-params-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 12px;
+}
+.pd-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pd-check {
+  min-height: 40px;
+  align-items: center;
+}
+.pd-lock {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--teal) 45%, var(--line-2));
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--fg-2);
+  overflow-wrap: anywhere;
+}
+.pd-run-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.pd-run-grid .mx-btn {
+  min-height: 46px;
+  white-space: normal;
+  line-height: 1.25;
+}
+.pd-run-both {
+  grid-column: 1 / -1;
+  font-size: var(--t-md) !important;
+}
+.pd-369 {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-2);
+}
+.pd-369.hot {
+  border-color: color-mix(in srgb, var(--amber) 70%, transparent);
+  background: color-mix(in srgb, var(--amber) 9%, var(--bg-2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 14%, transparent);
+}
+.pd-369-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 52px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 2px solid var(--gold);
+  background: radial-gradient(circle at 20% 30%, color-mix(in srgb, var(--gold) 22%, var(--bg-3)), var(--bg-2) 80%);
+  color: var(--gold);
+  font-size: var(--t-md);
+  font-weight: 500;
+  text-align: center;
+}
+.pd-369.hot .pd-369-btn {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 22%, transparent);
+}
+.pd-369-btn:active {
+  transform: scale(0.98);
+}
+.pd-369-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.pd-369-num {
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1;
+}
+.pd-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.progress > i.pd-indeterminate {
+  animation: pd-slide 1.2s ease-in-out infinite;
+}
+@keyframes pd-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress > i.pd-indeterminate {
+    animation: none;
+  }
+}
+.pd-result {
+  min-width: 0;
+}
+.pd-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pd-result-head .pill {
+  white-space: normal;
+}
+.pd-status {
+  font-size: var(--t-md);
+  overflow-wrap: anywhere;
+}
+.pd-lockline {
+  overflow-wrap: anywhere;
+}
+.pd-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.pd-reasons.miss {
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
+}
+.pd-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+}
+.pd-list.bad li::marker {
+  color: var(--rose);
+}
+.pd-list.faint {
+  color: var(--fg-3);
+}
+.pd-sep {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.pd-sep-part {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.pd-sep-part.pi {
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+.pd-sep-part.sym {
+  border-color: color-mix(in srgb, var(--rose) 45%, var(--line));
+  border-style: dashed;
+  box-shadow: inset 3px 0 0 var(--rose);
+}
+.pd-sep-part.test {
+  border-color: color-mix(in srgb, var(--gold) 45%, var(--line));
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+.pd-sep-part .mx-btn {
+  align-self: flex-start;
+}
+.pd-sep-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  line-height: 1.15;
+}
+.pd-kv {
+  grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+}
+.pd-disclaimer {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--gold);
+  background: color-mix(in srgb, var(--gold) 6%, var(--bg-2));
+  border-radius: 2px 8px 8px 2px;
+  font-size: 11.5px;
+  color: var(--fg-2);
+}
+.pd-map-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.pd-map-scroll {
+  background: var(--bg);
+  overscroll-behavior-x: contain;
+}
+.pd-map {
+  display: block;
+}
+.pd-map text {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  fill: var(--fg-2);
+}
+.pd-map .pd-map-head {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  fill: var(--fg);
+}
+.pd-edge {
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.pd-edge.l-matemaattinen {
+  stroke: var(--teal);
+}
+.pd-edge.l-geometrinen {
+  stroke: var(--violet);
+}
+.pd-edge.t369 {
+  stroke: var(--amber);
+  stroke-dasharray: 6 4;
+}
+.pd-map .pd-side {
+  font-size: 9.5px;
+  fill: var(--fg-3);
+}
+.pd-mnode-dot {
+  stroke-width: 2;
+}
+.pd-mnode.r-start .pd-mnode-dot {
+  fill: var(--teal);
+  stroke: var(--teal);
+}
+.pd-mnode.r-goal .pd-mnode-dot {
+  fill: var(--gold);
+  stroke: var(--gold);
+}
+.pd-mnode.r-known .pd-mnode-dot {
+  fill: var(--bg-3);
+  stroke: var(--fg-2);
+}
+.pd-meet-ring {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 2;
+  stroke-dasharray: 3 2;
+}
+.pd-map .pd-meet-label {
+  font-size: 9.5px;
+  fill: var(--gold);
+}
+.pd-map .pd-mnode-label {
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 600;
+  fill: var(--fg);
+}
+.pd-map .pd-mnode-code {
+  font-size: 10px;
+  fill: var(--fg-2);
+}
+.pd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--fg-3);
+}
+.pd-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pd-sw {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 3px solid var(--fg-3);
+}
+.pd-sw.l-matemaattinen {
+  border-top-color: var(--teal);
+}
+.pd-sw.l-geometrinen {
+  border-top-color: var(--violet);
+}
+.pd-sw.t369 {
+  border-top: 3px dashed var(--amber);
+}
+.pd-sw.meet {
+  width: 12px;
+  height: 12px;
+  border: 2px dashed var(--gold);
+  border-radius: 50%;
+}
+.pd-route {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--teal) 30%, var(--line));
+  background: var(--bg);
+  min-width: 0;
+}
+.pd-route-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+.pd-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pd-node-btn {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  text-align: left;
+  padding: 6px 12px;
+  min-height: 44px;
+}
+.pd-node-act {
+  margin-left: auto;
+  color: var(--teal);
+  font-size: 11.5px;
+}
+.pd-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pd-step {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--teal);
+  background: var(--bg-2);
+  font-size: var(--t-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pd-step.l-geometrinen {
+  border-left-color: var(--violet);
+}
+.pd-step.t369 {
+  border-left: 3px dashed var(--amber);
+}
+.pd-step-line {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.pd-step-no {
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--fg-3);
+}
+.pd-digits {
+  font-size: 11.5px;
+  color: var(--fg-2);
+}
+.pd-formula {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.pd-side-chip.s-432 {
+  color: var(--gold);
+}
+/* Lomakeruudukon kenttä koko leveydelle (esim. sokkotestin kohdetyyppi, jonka nimi ei mahdu puoleen 360 px:ssä). */
+.mx-form-grid > .pd-span-all {
+  grid-column: 1 / -1;
+}
+.pd-scores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.pd-score {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  min-width: 0;
+  font-size: var(--t-sm);
+}
+.pd-score {
+  border-color: color-mix(in srgb, var(--gold) 35%, var(--line));
+}
+.pd-score-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+.pd-score-total {
+  font-family: var(--font-mono);
+  color: var(--gold);
+  font-size: 15px;
+}
+.pd-details {
+  font-size: var(--t-sm);
+}
+.pd-details > summary {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--fg-2);
+}
+.pd-wrap-cell {
+  white-space: normal !important;
+  min-width: 180px;
+}
+.pd-reached-wrap {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.pd-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pd-saved-route {
+  overflow-wrap: anywhere;
+  color: var(--fg-2);
+}
+table.data tr.pd-row-exp td:last-child {
+  color: var(--amber);
+}
+table.data tr.pd-row-ok td:first-child {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+.pd-verdict {
+  font-size: var(--t-md);
+  overflow-wrap: anywhere;
+}
+/* Reitin näyttö kartoilla ja 3D:ssä: selitelappu ja sulkemispainike. */
+.pd-overlay-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 0 0 0 11px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--gold) 60%, var(--line-2));
+  background: var(--glass);
+  color: var(--gold);
+  font-size: var(--t-sm);
+}
+.pd-overlay-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pd-overlay-x {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--fg-2);
+  font-size: 18px;
+}
+.label3d.route {
+  transform: translate(-50%, -50%);
+  padding: 0 5px;
+  font-size: 10px;
+  color: #070b14;
+  background: var(--gold);
+  border-color: var(--gold);
+}

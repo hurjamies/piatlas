@@ -35,6 +35,8 @@ Ensimmäisen version käyttötapaus toimii näin:
 4. Vaihda näkymää: **Kartta** (spiraali, 8 kolmiota, avattu verkko) ja **Numerot** (alkuperäinen numerojono).
 5. Aja **Testit**-välilehdellä ensimmäinen kontrolloitu läheisyystesti.
 6. Avaa **Matriisi** ja napauta ”Avaa ensimmäinen testireitti” (ks. seuraava luku).
+7. Kysy reittiä lähtötilasta tavoitetilaan: **Matriisi → Etsi reitti**, ja testaa menetelmä **Sokkotestillä**
+   (ks. luku Path Discovery).
 
 ## Recursive Story Matrix (Matriisi-välilehti)
 
@@ -100,6 +102,61 @@ tallennetaan vain selaimen `localStorage`en. Sovellus ei lähetä niitä minnek�
 matriisin käyttö tee pyyntöjä sovelluksen ulkopuolelle (fontteja lukuun ottamatta), ja että tarina säilyy
 uudelleenlatauksessa.
 
+## Path Discovery (Matriisi → Etsi reitti ja Sokkotesti)
+
+Path Discovery etsii piin desimaaleista laskettavia reittejä lähtötilasta tavoitetilaan: solmut ovat
+tunnisteiden koodien tarkistettuja osumia, ja särmät tulevat vain nimetyistä säännöistä (seuraava osuma
+π-indeksissä, Fibonacci-naapuri spiraalissa, oktaedrin lähin ja valinnaiset 369-säännöt). Tarinan suhteet eivät
+ole hakusärmiä. Määrittely ja mitatut tulokset: [docs/POLKUHAKU.md](docs/POLKUHAKU.md).
+
+![Etsi reitti: tulos, lukitus ja kolmen osan erottelu](docs/screenshots/21-polku-reitit.jpg)
+
+**Kysymys puhelimella**
+
+1. Avaa **Matriisi** → **Etsi reitti**. Kirjoita lähtötila (esim. ”Matti ja Hanna eivät ole parisuhteessa”) ja
+   tavoitetila (”Matti ja Hanna ovat palanneet yhteen”) ja paina **Poimi tunnetut nimet**. Tekstistä poimitaan
+   vain tarinassa tunnetut nimet; jokainen siru näyttää koodin ja koodaussäännön (MATTI 62884, HANNA 42662).
+2. Jos lähtö ja tavoite koodautuvat samoiksi koodeiksi, sovellus varoittaa: haku ei voi erottaa niitä. Anna
+   tavoitteelle oma tunniste **Lisää tunniste** -lomakkeella (sana, numerojono, päivämäärä, henkilö tai
+   tapahtuma). Koodi näkyy ennen lisäystä: YHDESSÄ = 9433772 (7 numeroa, 1M-aineistossa ei osumia, joten se
+   hylätään syyn kanssa), KOTI = 5684 (114 osumaa).
+3. Paina **Kaksisuuntainen haku** (tai 432 / 234). Parametrit ja kysely lukitaan SHA-256-tiivisteellä ennen
+   kuin tulos näytetään. Jos muutat parametreja saman kyselyn tulosten näkemisen jälkeen, uusi ajo merkitään
+   ”eksploratiivinen (parametrit muutettu tulosten näkemisen jälkeen)”. **369 · tutki vaihtoehtoiset reitit**
+   ajaa saman kyselyn 369-säännöillä, ja jokainen 369-askel näkyy muunnoksena.
+4. Tulos kertoo aina, löytyikö reitti. Jos ei, syyt luetellaan (esim. ”ei osumia”, ”rintamat eivät
+   kohdanneet”). Puuttuvia vaiheita ei koskaan täydennetä tekstillä. Jokainen askel näyttää kaavan, π-indeksit
+   ja alkuperäiset numerot ✓. **Näytä spiraalissa** ja **Näytä 3D:ssä** piirtävät reitin kartalle.
+5. **Aja satunnaisvertailu** (R = 50 ja 5 satunnaisjonoa riittää alkuun) antaa p-arvot, toistettavuuden ja
+   Path Scoren. **Path Score ei ole todennäköisyys**, ja vastuuvapauslauseke näkyy sen vieressä.
+6. **Tallenna tulos** säilyttää kyselyn, reitit, tiivisteet ja vertailut laitteella.
+
+**Kolme osaa pidetään erillään jokaisessa tuloksessa**
+
+| Osa | Sisältö |
+| --- | --- |
+| **Laskettu piin rakenne** | reitit, numerot, indeksit, säännöt, ✓ tarkistettu lähdeaineistosta, Path Score |
+| **Käyttäjän symbolinen tulkinta** | lähtö- ja tavoitetekstit ja tunnisteiden merkitys (eivät vaikuta hakuun) |
+| **Testattu ennustetulos** | uusin sokkotesti samoilla parametreilla ja sen johtopäätös, tai ”Ei testattu” |
+
+**Mitä sokkotesti tarkoittaa.** Jos pii sisältää kaikki numerosarjat, se sisältää myös väärät tarinat, joten
+pelkkä reitti ei ole näyttöä. **Sokkotesti** piilottaa vuorollaan jokaisen tarinan polun askeleen (tai
+päivätyn tapahtuman), sekoittaa oikean vastauksen D samanpituisen harhauttimen joukkoon ja katsoo, nostaako
+sama haku muiden askelten perusteella oikean vastauksen kärkeen useammin kuin sattuma ja useammin kuin sama
+algoritmi ilman piin numeroita (satunnaisjonot). Vain tämä testi voisi tukea väitettä, että menetelmä tunnistaa
+todellisia tapahtumia.
+
+**Mitatut tulokset** (`pi_digits_1m.txt`, oletusparametrit, siemen 20261018):
+
+| Kysymys | Tulos |
+| --- | --- |
+| {MATTI, HANNA} → {SALLA, IDA} | paras reitti MATTI @858 260 → IDA @858 511 (1 askel); tasajakauma p = 0,980 (R = 50; R = 1 000: 0,983), satunnaisjonot p = 1,000 → ei harvinainen |
+| {MATTI, HANNA} → {YHDESSÄ, KOTI} | HANNA @293 979 → KOTI @294 284 (1 askel); p = 0,333 ja 0,667 (R = 50, 5 jonoa), Path Score 46 → ei harvinainen |
+| Sokkotesti, siemen-tarinan polut (6 askelta, D = 9) | oikein 0/6 (odotus 0,60), keskisijoitus 6,33 (odotus 5,50), p = 0,778 → ei näyttöä (siemen 20261017: 0/6, p = 0,582) |
+
+Menetelmä ei siis tällä aineistolla tunnista piilotettuja askeleita sattumaa paremmin, eikä yksikään löydetty
+reitti ole ennuste.
+
 ## Asennus ja komennot
 
 Vaatii Node.js 20+.
@@ -107,7 +164,7 @@ Vaatii Node.js 20+.
 ```bash
 npm install
 npm run dev            # kehityspalvelin (myös lähiverkkoon: --host)
-npm test               # Vitest: 277 yksikkötestiä, myös täydellä 1M-aineistolla
+npm test               # Vitest: 403 yksikkötestiä, myös täydellä 1M-aineistolla
 npm run build          # tavallinen tuotantoversio → dist/
 npm run build:pages    # GitHub Pages -versio → dist/ (offline-PWA)
 npm run build:artifact # yksi HTML-tiedosto + data/ → dist-artifact/
@@ -119,12 +176,13 @@ Päästä päähän -testi ja kuvakaappaukset (Playwright, ei projektin riippuvu
 ```bash
 npm run build && npx vite preview --port 4173 &
 npm i -D playwright && npx playwright install chromium   # kerran
-npm run e2e            # 66 tarkistusta puhelinkoossa (412 px, matriisi myös 360 px), kuvat → docs/screenshots/
+npm run e2e            # 86 tarkistusta puhelinkoossa (412 px, matriisi ja Path Discovery myös 360 px), kuvat → docs/screenshots/
 PI_ATLAS_NO_WORKER=1 npm run e2e   # sama ilman Web Workeria (varapolku)
 ```
 
 Ilman globaalia asennusta: `NODE_PATH=$(npm root -g) node scripts/e2e.cjs`. Ympäristömuuttuja
-`PI_ATLAS_SHOTS` vaihtaa kuvien kansion, ja `PI_ATLAS_SHOTS_360` tallentaa lisäksi 360 px:n matriisikuvat.
+`PI_ATLAS_SHOTS` vaihtaa kuvien kansion, ja `PI_ATLAS_SHOTS_360` tallentaa lisäksi 360 px:n matriisi- ja
+polkuhakukuvat.
 
 ## Mitä on toteutettu
 
@@ -185,6 +243,21 @@ Ilman globaalia asennusta: `NODE_PATH=$(npm root -g) node scripts/e2e.cjs`. Ymp�
   ovat aina ”löydön jälkeen”), BH-q ja monivertailuvaroitus kaikkien ajojen määrällä.
 - E2e-testi käy koko polun läpi puhelinkoossa (412 px) ja tarkistaa asettelun myös 360 px:n leveydellä.
 
+**Path Discovery (Matriisi → Etsi reitti, Sokkotesti)** — käyttö yllä, määrittely [docs/POLKUHAKU.md](docs/POLKUHAKU.md)
+
+- Tunnisteet tekstistä (vain tarinan tunnetut nimet) tai käsin: nimi, sana, numerojono, päivämäärä, henkilö,
+  tapahtuma; koodi ja koodaussääntö näkyvät ennen lisäystä. Varoitus, jos lähtö ja tavoite koodautuvat samoiksi.
+- Haku 234, 432 ja kaksisuuntainen sekä erillinen 369-avain (`PIATLAS-PATH-1.0.0`); syyt aina, kun reittiä ei
+  löydy. Jokainen askel tarkistetaan lähdeaineistosta, ja reitti näkyy reittikarttana, askelittain, spiraalissa
+  ja 3D:ssä.
+- SHA-256-lukitus ennen moottorikutsua, eksploratiivinen merkintä, kun asetuksia muutetaan tulosten näkemisen
+  jälkeen, ja monivertailu kaikista hauista, vertailuista ja sokkotesteistä (BH-q).
+- Satunnaisvertailu (tasajakauma ja satunnaisjonot) ja Path Score vastuuvapauslausekkeineen
+  (`PIATLAS-PATHSCORE-1.0.0`); kokonaispistemäärää ei anneta ilman vertailua ja toistettavuutta.
+- Sokkotesti leave-one-out-periaatteella, vuotojen esto ja piitön vertailu (`PIATLAS-BLIND-1.0.0`).
+- Tulosten tallennus laitteelle, loki, muutoshistoria ja raportin osio `pathDiscovery`. Yksi moottorityö
+  kerrallaan (myös reittitestin kanssa), ja käynnissä olevan työn voi keskeyttää.
+
 **Vielä suunnitelmaa**
 
 - 4D 16-cell -hyperoktaedrin projektiot.
@@ -235,14 +308,16 @@ sitä: kaikki kolme tulosta ovat eksploratiivisia. Laskettu ydinkirjaston funkti
 ```
 src/core/        puhdas laskenta: digits, encodings, search, mapping, net, fibonacci, stats, random, neighbors
 src/core/matrix/ tarinamatriisi: avaus (expand), reitti, tarinamalli, 369, hyppysäännöt, reittitesti
+src/core/path/   Path Discovery: tunnisteet, säännöt, haku, Path Score ja nollamallit, sokkotesti
 src/engine/      Web Worker ja pääsäikeen varapolku (sama käsittelijä)
-src/state/       sovelluksen tila, tallennus (localStorage + IndexedDB), raportti, matriisin tila ja toiminnot
+src/state/       sovelluksen tila, tallennus (localStorage + IndexedDB), raportti, matriisin ja polkuhaun tila
 src/ui/          React-näkymät: Avaruus (Three.js), Kartta (canvas), Numerot, Testit, Matriisi, paneelit
-src/ui/matrix/   Matriisi-välilehden osat: murupolku, ohjaus, verkkokuva, yhteyslista, Tarina, Reitit, Loki
+src/ui/matrix/   Matriisi-välilehden osat: murupolku, ohjaus, verkkokuva, yhteyslista, Tarina, Reitit, Loki,
+                 Etsi reitti ja Sokkotesti
 tests/           Vitest-testit (täysi 1M-aineisto + fixture)
 scripts/         e2e.cjs, artifact-wrap.mjs, make-icons.cjs, stats-summary.ts
 public/data/     pi_digits_1m.txt (tutkimusaineisto)
-docs/            TEKNINEN.md, MATRIISI.md ja kuvakaappaukset
+docs/            TEKNINEN.md, MATRIISI.md, POLKUHAKU.md ja kuvakaappaukset
 .github/         GitHub Actions: testit ja Pages-julkaisu
 ```
 

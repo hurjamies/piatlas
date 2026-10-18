@@ -3,6 +3,7 @@ import { FIB } from '../../core/fibonacci';
 import { select, setPrefs, setTab } from '../../state/actions';
 import { useCompanions } from '../../state/derived';
 import { store, useApp } from '../../state/store';
+import { RouteOverlayChip } from '../components/RouteOverlayChip';
 import { fmtN } from '../format';
 import { SceneTerm, SpaceScene } from './space-scene';
 
@@ -26,6 +27,7 @@ export function SpaceView() {
   const prefs = useApp((s) => s.prefs);
   const N = useApp((s) => s.digits.length);
   const companions = useCompanions();
+  const overlay = useApp((s) => s.pathOverlay);
 
   useEffect(() => {
     const sc = new SpaceScene(hostRef.current!, labelsRef.current!, (hit) => {
@@ -93,13 +95,20 @@ export function SpaceView() {
           return t ? { ...c, label: t.label, color: t.color } : null;
         })
         .filter((x): x is NonNullable<typeof x> => !!x),
-      showPath: prefs.showPath,
+      // Polkuhaun reitin aikana merkkipolun numerot jätetään pois, jotta ne eivät sekoitu reitin solmujen numeroihin.
+      showPath: prefs.showPath && !overlay,
     });
-  }, [selection, anchor, companions, terms, hits, prefs.showPath, sceneTerms]);
+  }, [selection, anchor, companions, terms, hits, prefs.showPath, sceneTerms, overlay]);
 
   useEffect(() => {
     sceneRef.current?.setAutoRotate(prefs.autoRotate);
   }, [prefs.autoRotate]);
+
+  // Polkuhaun reitti (Näytä 3D:ssä): viiva ja numeroidut merkit; kamera reitin ensimmäisen solmun suuntaan.
+  useEffect(() => {
+    sceneRef.current?.setRoute(overlay ? overlay.points : null);
+    if (overlay?.points.length) sceneRef.current?.focusOn(overlay.points[0].n);
+  }, [overlay]);
 
   const visibleCount = sceneTerms.reduce((a, t) => a + t.hits.length, 0);
 
@@ -118,6 +127,7 @@ export function SpaceView() {
         </div>
       )}
       <div className="overlay-top">
+        <RouteOverlayChip />
         <div className="seg" role="group" aria-label="3D-kartoitus">
           <button aria-pressed={mode === 'octa'} onClick={() => store.set({ spaceMode: 'octa' })}>
             Oktaedri
